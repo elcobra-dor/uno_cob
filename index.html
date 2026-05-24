@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conciliación — CAPECO</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+:root{
+  --bg:#f7f6f3;--bg2:#ffffff;--bg3:#f0ede8;
+  --border:#e0dbd4;--border2:#ccc8c0;
+  --text:#1a1916;--text2:#6b6760;--text3:#a8a49e;
+  --green:#0d9e5c;--green-dim:#e6f7ef;--green-text:#0a7a47;
+  --amber:#c47f00;--amber-dim:#fef8e6;--amber-text:#a06500;
+  --blue:#1a6db5;--blue-dim:#e8f1fb;--blue-text:#14559a;
+  --red:#c0392b;--red-dim:#fdeaea;--red-text:#9b2d22;
+  --purple:#6d3fa0;--purple-dim:#f0eaf8;--purple-text:#5a3285;
+  --radius:10px;--mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+  --shadow-md:0 4px 12px rgba(0,0,0,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;min-height:100vh}
+
+/* SIDEBAR */
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:220px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:50}
+.sidebar-logo{padding:20px 20px 16px;border-bottom:1px solid var(--border)}
+.logo-title{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text);letter-spacing:.5px}
+.logo-sub{font-size:11px;color:var(--text3);margin-top:2px}
+.sidebar-nav{padding:12px 10px;flex:1}
+.nav-section{font-size:10px;font-weight:600;color:var(--text3);letter-spacing:1px;padding:8px 10px 4px;text-transform:uppercase}
+.nav-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);transition:all .15s;margin-bottom:2px;text-decoration:none}
+.nav-item:hover{background:var(--bg3);color:var(--text)}
+.nav-item.active{background:var(--green-dim);color:var(--green-text);font-weight:500}
+.nav-item .icon{font-size:16px;width:20px;text-align:center}
+.sidebar-footer{padding:14px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text3)}
+
+/* MAIN */
+.main{margin-left:220px;min-height:100vh}
+.topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:40}
+.topbar-title{font-size:15px;font-weight:600;color:var(--text)}
+.topbar-right{display:flex;gap:8px;align-items:center}
+.content{padding:28px}
+
+/* STATS ROW */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;box-shadow:var(--shadow)}
+.stat-card .label{font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px}
+.stat-card .value{font-family:var(--mono);font-size:22px;font-weight:600;color:var(--text)}
+.stat-card .sub{font-size:11px;color:var(--text3);margin-top:4px}
+.stat-card.green .value{color:var(--green-text)}
+.stat-card.amber .value{color:var(--amber-text)}
+.stat-card.blue .value{color:var(--blue-text)}
+
+/* PROGRESS */
+.progress-wrap{height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;margin-bottom:20px}
+.progress-bar{height:100%;background:var(--green);border-radius:2px;transition:width .4s}
+
+/* CARDS */
+.section-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.section-title{font-size:13px;font-weight:600;color:var(--text2);letter-spacing:.3px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:10px;box-shadow:var(--shadow);border-left:3px solid var(--border2);transition:border-color .15s}
+.card.confirmed{border-left-color:var(--green)}
+.card.manual{border-left-color:var(--blue)}
+.card.suggested{border-left-color:var(--amber)}
+.card.pending{border-left-color:var(--border2)}
+.card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+.card-left{flex:1;min-width:0}
+.desc{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ordenante{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--blue-text);background:var(--blue-dim);border-radius:4px;padding:2px 8px;margin-top:4px;font-family:var(--mono)}
+.meta{font-size:11px;color:var(--text3);margin-top:3px;font-family:var(--mono)}
+.monto{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--text)}
+.badge{display:inline-block;font-size:10px;padding:2px 8px;border-radius:3px;font-family:var(--mono);font-weight:600;letter-spacing:.5px;margin-top:5px}
+.badge-confirmed{background:var(--green-dim);color:var(--green-text)}
+.badge-manual{background:var(--blue-dim);color:var(--blue-text)}
+.badge-high{background:var(--green-dim);color:var(--green-text)}
+.badge-med{background:var(--amber-dim);color:var(--amber-text)}
+.badge-pend{background:var(--bg3);color:var(--text3)}
+.factura-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border)}
+.factura-select{flex:1;min-width:200px;font-family:var(--sans);font-size:12px;padding:6px 10px;border:1px solid var(--border2);border-radius:6px;background:var(--bg3);color:var(--text);outline:none}
+.factura-select:focus{border-color:var(--green)}
+.reason{font-size:11px;color:var(--blue-text);margin-top:6px;font-family:var(--mono)}
+
+/* BUTTONS */
+.btn{font-family:var(--mono);font-size:11px;padding:7px 14px;border-radius:6px;border:1px solid var(--border2);cursor:pointer;background:var(--bg2);color:var(--text2);font-weight:500;white-space:nowrap;letter-spacing:.5px;transition:all .15s}
+.btn:hover{border-color:var(--text2);color:var(--text)}
+.btn-primary{background:var(--green);border-color:var(--green);color:#fff;font-size:12px;padding:8px 18px}
+.btn-primary:hover{background:var(--green-text);border-color:var(--green-text);color:#fff}
+.btn-confirm{border-color:var(--green);color:var(--green-text);background:var(--green-dim)}
+.btn-confirm:hover{background:var(--green);color:#fff}
+.btn-remove{border-color:var(--border2);color:var(--text3);padding:6px 10px}
+.btn-remove:hover{border-color:var(--red);color:var(--red-text);background:var(--red-dim)}
+.btn-export{padding:7px 16px;border-radius:6px;border:1px solid var(--green);color:var(--green-text);background:var(--green-dim);cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;font-family:var(--mono);transition:all .15s}
+.btn-export:hover{background:var(--green);color:#fff}
+.btn-blue{border-color:var(--blue);color:var(--blue-text);background:var(--blue-dim)}
+.btn-blue:hover{background:var(--blue);color:#fff}
+.btn-amber{border-color:var(--amber);color:var(--amber-text);background:var(--amber-dim)}
+.btn-amber:hover{background:var(--amber);color:#fff}
+
+/* TOOLBAR */
+.toolbar{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;box-shadow:var(--shadow)}
+.toolbar select,.toolbar input[type=text]{font-family:var(--sans);font-size:12px;padding:6px 10px;border:1px solid var(--border2);border-radius:6px;background:var(--bg3);color:var(--text);outline:none}
+.toolbar select:focus,.toolbar input[type=text]:focus{border-color:var(--green)}
+.toolbar input[type=text]{width:220px}
+.toolbar label{font-size:11px;color:var(--text3);letter-spacing:.3px;white-space:nowrap}
+.sep{width:1px;height:20px;background:var(--border)}
+
+/* UPLOAD PANEL */
+.upload-panel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow);max-width:800px;margin:0 auto}
+.upload-title{font-family:var(--mono);font-size:13px;color:var(--text2);letter-spacing:.5px;margin-bottom:6px}
+.upload-desc{font-size:12px;color:var(--text3);margin-bottom:24px;line-height:1.7}
+.files-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
+.file-slot{border:1.5px dashed var(--border2);border-radius:8px;padding:18px 14px;text-align:center;cursor:pointer;transition:all .2s;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.file-slot:hover{border-color:var(--green);background:var(--green-dim)}
+.file-slot.loaded{border-style:solid;border-color:var(--green);background:var(--green-dim)}
+.file-slot.optional{border-color:var(--border)}
+.file-slot.optional.loaded{border-color:var(--blue);background:var(--blue-dim)}
+.file-slot input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;z-index:10}
+.file-slot label{position:relative;z-index:5;pointer-events:none}
+.file-icon{font-size:24px;margin-bottom:6px;display:block}
+.file-label{font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:.5px;margin-bottom:3px;text-transform:uppercase}
+.file-status{font-size:11px;color:var(--text3)}
+.file-slot.loaded .file-status{color:var(--green-text)}
+.file-slot.optional.loaded .file-status{color:var(--blue-text)}
+
+/* TOAST */
+.toast{position:fixed;bottom:24px;right:24px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 18px;font-family:var(--mono);font-size:12px;color:var(--text);z-index:999;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;box-shadow:var(--shadow-md)}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.green{border-color:var(--green);color:var(--green-text);background:var(--green-dim)}
+.toast.amber{border-color:var(--amber);color:var(--amber-text);background:var(--amber-dim)}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:200;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-overlay.show{opacity:1;pointer-events:all}
+.modal{background:var(--bg2);border-radius:12px;padding:28px;max-width:480px;width:90%;box-shadow:var(--shadow-md)}
+.modal-title{font-size:15px;font-weight:600;margin-bottom:8px}
+.modal-desc{font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end}
+
+/* EMPTY */
+.empty{text-align:center;padding:60px 24px;color:var(--text3);font-size:13px}
+.empty .empty-icon{font-size:40px;display:block;margin-bottom:12px}
+
+/* PAGE SECTIONS */
+.page{display:none}
+.page.active{display:block}
+
+/* FACTURAS LIST */
+.fact-row{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px;transition:background .1s}
+.fact-row:hover{background:var(--bg3)}
+.fact-row:last-child{border-bottom:none}
+.fact-name{font-size:13px;font-weight:500;color:var(--text)}
+.fact-num{font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px}
+.fact-dates{font-size:11px;color:var(--text3);text-align:right}
+.fact-saldo{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text);text-align:right;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.vencida{background:var(--red)}
+.dot.proxima{background:var(--amber)}
+.dot.ok{background:var(--green)}
+
+/* TABLE */
+.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-title">CAPECO</div>
+    <div class="logo-sub">Cuentas por cobrar</div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">Principal</div>
+    <a class="nav-item active" onclick="showPage('conciliacion')" href="#">
+      <span class="icon">⇄</span> Conciliación
+    </a>
+    <a class="nav-item" onclick="showPage('facturas')" href="#">
+      <span class="icon">🧾</span> Facturas
+    </a>
+    <div class="nav-section" style="margin-top:12px">Exportar</div>
+    <a class="nav-item" onclick="exportarCSV()" href="#">
+      <span class="icon">📄</span> Exportar CSV
+    </a>
+    <a class="nav-item" onclick="exportarSistema()" href="#">
+      <span class="icon">📋</span> Exportar Sistema
+    </a>
+    <a class="nav-item" onclick="exportarEstado()" href="#">
+      <span class="icon">💾</span> Guardar estado
+    </a>
+  </nav>
+  <div class="sidebar-footer">
+    <div id="db-status">⚪ Conectando...</div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-title" id="topbar-title">Conciliación bancaria</div>
+    <div class="topbar-right">
+      <div id="stats-mini" style="display:flex;gap:8px;font-family:var(--mono);font-size:12px;color:var(--text3)"></div>
+      <button class="btn btn-primary" onclick="showUpload()">+ Cargar archivos</button>
+    </div>
+  </div>
+
+  <!-- CONCILIACION PAGE -->
+  <div id="page-conciliacion" class="page active content">
+    <div class="stats-row" id="stats-row">
+      <div class="stat-card"><div class="label">Total abonos</div><div class="value" id="st-total">—</div></div>
+      <div class="stat-card green"><div class="label">Confirmados</div><div class="value" id="st-conf">—</div></div>
+      <div class="stat-card amber"><div class="label">Pendientes</div><div class="value" id="st-pend">—</div></div>
+      <div class="stat-card blue"><div class="label">Progreso</div><div class="value" id="st-pct">—</div></div>
+    </div>
+    <div class="progress-wrap"><div class="progress-bar" id="prog" style="width:0%"></div></div>
+
+    <div class="toolbar">
+      <label>Filtrar:</label>
+      <select id="fil-estado" onchange="render()">
+        <option value="todos">Todos</option>
+        <option value="pendiente">Sin confirmar</option>
+        <option value="confirmado">Confirmados</option>
+        <option value="inter">Con ordenante</option>
+      </select>
+      <select id="fil-monto" onchange="render()"><option value="todos">Todos los montos</option></select>
+      <div class="sep"></div>
+      <input type="text" id="fil-busca" placeholder="Buscar empresa, factura, N° op..." oninput="render()">
+    </div>
+
+    <div class="section-hdr">
+      <div class="section-title" id="count-label">Cargando...</div>
+    </div>
+    <div id="lista"></div>
+  </div>
+
+  <!-- FACTURAS PAGE -->
+  <div id="page-facturas" class="page content">
+    <div class="stats-row">
+      <div class="stat-card"><div class="label">Total facturas</div><div class="value" id="f-total">—</div></div>
+      <div class="stat-card" style="border-top:3px solid var(--red)"><div class="label">Vencidas</div><div class="value" style="color:var(--red)" id="f-venc">—</div></div>
+      <div class="stat-card amber"><div class="label">Por vencer (7 días)</div><div class="value" id="f-prox">—</div></div>
+      <div class="stat-card blue"><div class="label">Saldo total</div><div class="value" id="f-saldo">—</div></div>
+    </div>
+    <div class="toolbar">
+      <label>Estado:</label>
+      <select id="ff-estado" onchange="renderFacturas()">
+        <option value="todos">Todas</option>
+        <option value="vencida">Vencidas</option>
+        <option value="proxima">Por vencer</option>
+        <option value="ok">Al día</option>
+      </select>
+      <div class="sep"></div>
+      <input type="text" id="ff-busca" placeholder="Buscar empresa o factura..." oninput="renderFacturas()" style="width:220px">
+    </div>
+    <div class="table-wrap" id="fact-list"></div>
+  </div>
+</div>
+
+<!-- UPLOAD MODAL -->
+<div class="modal-overlay" id="modal-upload">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-title">Cargar archivos</div>
+    <div class="modal-desc">Los datos se guardarán en la base de datos. Los duplicados se ignoran automáticamente por N° de operación y N° de factura.</div>
+    <div class="files-grid">
+      <label class="file-slot" id="slot-facturas" for="inp-facturas">
+        <input type="file" id="inp-facturas" accept=".xlsx,.xls" onchange="cargarFacturas(this)" style="display:none">
+        <span class="file-icon">🧾</span>
+        <div class="file-label">Facturas</div>
+        <div class="file-status" id="status-facturas">Click para seleccionar</div>
+      </label>
+      <label class="file-slot" id="slot-bancos" for="inp-bancos">
+        <input type="file" id="inp-bancos" accept=".xlsx,.xls" onchange="cargarBancos(this)" style="display:none">
+        <span class="file-icon">🏦</span>
+        <div class="file-label">Bancos</div>
+        <div class="file-status" id="status-bancos">Click para seleccionar</div>
+      </label>
+      <label class="file-slot optional" id="slot-inter" for="inp-inter">
+        <input type="file" id="inp-inter" accept=".xlsx,.xls" onchange="cargarInter(this)" style="display:none">
+        <span class="file-icon">🔁</span>
+        <div class="file-label">Interbancarios</div>
+        <div class="file-status" id="status-inter">Opcional</div>
+      </label>
+      <label class="file-slot optional" id="slot-bd" for="inp-bd">
+        <input type="file" id="inp-bd" accept=".xlsx,.xls" onchange="cargarBD(this)" style="display:none">
+        <span class="file-icon">📋</span>
+        <div class="file-label">Banco BD</div>
+        <div class="file-status" id="status-bd">Opcional</div>
+      </label>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <button class="btn" onclick="hideUpload()">Cerrar</button>
+      <button class="btn btn-primary" onclick="procesarYCerrar()">Procesar y conciliar →</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── SUPABASE ────────────────────────────────────────────────────────────────
+const SUPA_URL = 'https://olfbhboheiewqugmiqvy.supabase.co';
+const SUPA_KEY = 'sb_publishable_GwIxZqcQJmQaRKlirlngwg_e3j0gTbv';
+const { createClient } = supabase;
+const db = createClient(SUPA_URL, SUPA_KEY);
+
+// ─── ESTADO GLOBAL ───────────────────────────────────────────────────────────
+let FACTURAS  = [];
+let PAGOS     = [];
+let INTER_MAP = {};
+let BD_MAP    = {};
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+function norm(s){ return (s||'').toUpperCase().replace(/[^A-Z0-9]/g,' ').replace(/\s+/g,' ').trim(); }
+function toast(msg, tipo=''){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast show'+(tipo?' '+tipo:'');
+  setTimeout(()=>t.className='toast',3000);
+}
+function fmtFecha(v){
+  if(!v) return null;
+  // Número serial de Excel
+  if(typeof v==='number'){ const d=new Date((v-25569)*86400000); return d.toISOString().slice(0,10); }
+  if(v instanceof Date) return v.toISOString().slice(0,10);
+  if(typeof v==='string'){
+    const s=v.trim();
+    // Formato DD/MM/YYYY o DD-MM-YYYY
+    const m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    // Formato MM/DD/YYYY
+    const m2=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
+    if(m2) return `20${m2[3]}-${m2[1].padStart(2,'0')}-${m2[2].padStart(2,'0')}`;
+    // Ya viene YYYY-MM-DD
+    return s.slice(0,10);
+  }
+  return null;
+}
+function leerExcel(file){ return new Promise(res=>{ const r=new FileReader(); r.onload=e=>res(XLSX.read(e.target.result,{type:'binary'})); r.readAsBinaryString(file); }); }
+function fmtMonto(n){ return 'S/ '+parseFloat(n||0).toLocaleString('es-PE',{minimumFractionDigits:2}); }
+function diasHasta(fecha){
+  if(!fecha) return null;
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const f=new Date(fecha+'T00:00:00');
+  return Math.round((f-hoy)/(1000*60*60*24));
+}
+
+// ─── NAVEGACIÓN ──────────────────────────────────────────────────────────────
+function showPage(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  event.currentTarget.classList.add('active');
+  if(page==='conciliacion') document.getElementById('topbar-title').textContent='Conciliación bancaria';
+  if(page==='facturas'){ document.getElementById('topbar-title').textContent='Facturas pendientes'; renderFacturas(); }
+}
+function showUpload(){ document.getElementById('modal-upload').classList.add('show'); }
+function hideUpload(){ document.getElementById('modal-upload').classList.remove('show'); }
+
+// ─── CONEXIÓN BD ─────────────────────────────────────────────────────────────
+async function init(){
+  try{
+    const {data,error} = await db.from('facturas').select('count',{count:'exact',head:true});
+    if(error) throw error;
+    document.getElementById('db-status').textContent='🟢 Base de datos OK';
+    await cargarDesdeBD();
+  }catch(e){
+    document.getElementById('db-status').textContent='🔴 Sin conexión';
+    toast('Error de conexión: '+e.message,'');
+  }
+}
+
+async function cargarDesdeBD(){
+  // Cargar facturas
+  const {data:fdata} = await db.from('facturas').select('*').order('fecha_doc');
+  FACTURAS = fdata||[];
+
+  // Cargar abonos
+  const {data:bdata} = await db.from('abonos').select('*').order('fecha');
+  const abonos = bdata||[];
+
+  // Cargar conciliaciones confirmadas
+  const {data:cdata} = await db.from('conciliaciones').select('*');
+  const concMap = {};
+  (cdata||[]).forEach(c=>{
+    if(!concMap[c.operacion]) concMap[c.operacion]=[];
+    concMap[c.operacion].push({factura:c.factura, razon:c.razon, importe_factura:c.importe_factura});
+  });
+
+  // Construir PAGOS
+  PAGOS = abonos.map((b,i)=>({
+    ...b, id:i,
+    estado: concMap[b.operacion] ? 'confirmado' : 'pendiente',
+    facturas: concMap[b.operacion] || [{factura:'',razon:''}],
+    motivo: concMap[b.operacion] ? 'Guardado' : '',
+    confianza: ''
+  }));
+
+  // Sugerir para pendientes
+  const usadas = new Set(PAGOS.filter(p=>p.estado==='confirmado').flatMap(p=>p.facturas.map(f=>f.factura)).filter(Boolean));
+  PAGOS.forEach(p=>{
+    if(p.estado==='pendiente'){
+      const sug=sugerirFactura(p,usadas);
+      if(sug){ p.facturas=[{factura:sug.factura,razon:sug.razon}]; p.motivo=sug.motivo; p.confianza=sug.confianza; p.estado='sugerida'; usadas.add(sug.factura); }
+    }
+  });
+
+  poblarFiltroMontos();
+  actualizarStats();
+  render();
+  renderFacturas();
+  toast('Datos cargados desde la base de datos','green');
+}
+
+// ─── CARGA DE ARCHIVOS ───────────────────────────────────────────────────────
+async function cargarFacturas(input){
+  const wb=await leerExcel(input.files[0]);
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+  const keys=rows.length?Object.keys(rows[0]):[];
+  const colFact=keys.find(k=>/factura/i.test(k));
+  const colRS=keys.find(k=>/razon|empresa|social/i.test(k));
+  const colFD=keys.find(k=>/fecha.*doc/i.test(k))||keys.find(k=>/fecha/i.test(k));
+  const colFV=keys.find(k=>/fecha.*ven|venc/i.test(k));
+  const colSaldo=keys.find(k=>/saldo/i.test(k))||keys.find(k=>/importe|total|monto/i.test(k));
+  const colMes=keys.find(k=>/^mes$/i.test(k));
+  if(!colFact||!colSaldo){ alert('No se detectaron columnas de Factura o Saldo.'); return; }
+
+  const nuevas=rows.filter(r=>parseFloat(r[colSaldo])>0).map(r=>({
+    factura:String(r[colFact]).trim(),
+    razon_social:colRS?String(r[colRS]).trim():'',
+    fecha_doc:fmtFecha(r[colFD]||''),
+    fecha_ven:fmtFecha(r[colFV]||''),
+    saldo:parseFloat(r[colSaldo])||0,
+    mes:colMes?parseInt(r[colMes])||0:0
+  })).filter(r=>r.factura);
+
+  // Upsert en Supabase (ignora duplicados por factura)
+  const {error}=await db.from('facturas').upsert(nuevas,{onConflict:'factura',ignoreDuplicates:true});
+  if(error){ toast('Error guardando facturas: '+error.message,''); return; }
+
+  document.getElementById('slot-facturas').classList.add('loaded');
+  document.getElementById('status-facturas').textContent=nuevas.length+' facturas';
+  toast(nuevas.length+' facturas cargadas','green');
+}
+
+async function cargarBancos(input){
+  const wb=await leerExcel(input.files[0]);
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+  const keys=rows.length?Object.keys(rows[0]):[];
+  const colFecha=keys.find(k=>/^fecha$/i.test(k))||keys.find(k=>/fecha/i.test(k));
+  const colDesc=keys.find(k=>/descripci|glosa|concepto/i.test(k));
+  const colMonto=keys.find(k=>/^monto$/i.test(k))||keys.find(k=>/importe|amount/i.test(k));
+  const colOp=keys.find(k=>/operaci.*n.*n.m/i.test(k))||keys.find(k=>/n.m.*operaci/i.test(k));
+  const colRef2=keys.find(k=>/referencia2|ref.*2/i.test(k))||keys.find(k=>/referencia/i.test(k));
+  if(!colMonto||!colOp){ alert('No se detectaron columnas de Monto u Operación.'); return; }
+
+  const nuevos=rows.filter(r=>parseFloat(r[colMonto])>0).map(r=>({
+    operacion:String(r[colOp]).trim(),
+    fecha:fmtFecha(r[colFecha]||''),
+    descripcion:colDesc?String(r[colDesc]).trim():'',
+    monto:parseFloat(r[colMonto])||0,
+    referencia2:colRef2?String(r[colRef2]).trim():''
+  })).filter(r=>r.operacion);
+
+  const {error}=await db.from('abonos').upsert(nuevos,{onConflict:'operacion',ignoreDuplicates:true});
+  if(error){ toast('Error guardando abonos: '+error.message,''); return; }
+
+  document.getElementById('slot-bancos').classList.add('loaded');
+  document.getElementById('status-bancos').textContent=nuevos.length+' abonos';
+  toast(nuevos.length+' abonos cargados','green');
+}
+
+async function cargarInter(input){
+  const wb=await leerExcel(input.files[0]);
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+  const keys=rows.length?Object.keys(rows[0]):[];
+  const colOp=keys.find(k=>/n.*operaci|operaci.*n/i.test(k));
+  const colOrd=keys.find(k=>/ordenante/i.test(k));
+  if(!colOp||!colOrd){ alert('No se detectaron columnas de Operación u Ordenante.'); return; }
+  rows.forEach(r=>{ const op=String(r[colOp]).trim(); if(op) INTER_MAP[op]=String(r[colOrd]).trim(); });
+  document.getElementById('slot-inter').classList.add('loaded');
+  document.getElementById('status-inter').textContent=Object.keys(INTER_MAP).length+' registros';
+  toast('Interbancarios cargados','green');
+}
+
+async function cargarBD(input){
+  const wb=await leerExcel(input.files[0]);
+  const sheetName=wb.SheetNames.find(s=>/^BD$/i.test(s))||wb.SheetNames[0];
+  const ws=wb.Sheets[sheetName];
+  const rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
+  const keys=rows.length?Object.keys(rows[0]):[];
+  const colOpBD=keys.find(k=>/^op$/i.test(k))||keys[30];
+  const colGlosa=keys.find(k=>/^glosa/i.test(k))||keys[47];
+  rows.forEach(r=>{
+    const op=String(r[colOpBD]||'').trim().replace(/^0+/,'');
+    if(op) BD_MAP[op]={...r, glosa:r[colGlosa]||''};
+  });
+  document.getElementById('slot-bd').classList.add('loaded');
+  document.getElementById('status-bd').textContent=Object.keys(BD_MAP).length+' registros';
+  toast('BD cargado','green');
+}
+
+async function procesarYCerrar(){
+  // Aplicar interbancarios
+  PAGOS.forEach(p=>{ const ord=INTER_MAP[String(p.operacion)]; if(ord) p.ordenante=ord; });
+  await cargarDesdeBD();
+  hideUpload();
+}
+
+// ─── SUGERENCIA ──────────────────────────────────────────────────────────────
+function extractNumFact(s){
+  let m=s.match(/F\d+[-\s]?0*(\d{4,})/i);
+  if(m) return m[1];
+  m=s.match(/(?<![0-9])(0*(\d{5,}))/);
+  if(m) return m[2];
+  return null;
+}
+
+function sugerirFactura(pago, usadas){
+  const desc=norm(pago.descripcion); const ref2=norm(pago.referencia2||''); const ord=norm(pago.ordenante||'');
+  const monto=pago.monto;
+  const candsExactas=FACTURAS.filter(f=>f.saldo===monto&&!usadas.has(f.factura));
+
+  // Alta: número de factura
+  let m=(pago.referencia2||'').match(/F\d+-?0*(\d{4,})/i);
+  if(m){ const nd=m[1]; const f=candsExactas.find(x=>x.factura.includes(nd))||FACTURAS.find(x=>x.factura.includes(nd)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
+  const nd=extractNumFact(pago.descripcion);
+  if(nd){ const f=candsExactas.find(x=>x.factura.includes(nd))||FACTURAS.find(x=>x.factura.includes(nd)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en descripción',confianza:'alta'}; }
+  const nr=extractNumFact(pago.referencia2||'');
+  if(nr){ const f=candsExactas.find(x=>x.factura.includes(nr))||FACTURAS.find(x=>x.factura.includes(nr)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
+
+  // Media: nombre empresa
+  const candsNombre=FACTURAS.filter(f=>f.saldo<=monto&&!usadas.has(f.factura));
+  const palabras=(desc+' '+ref2+' '+ord).split(' ').filter(w=>w.length>3);
+  let best=null,bestScore=0;
+  for(const f of candsNombre){ const rs=norm(f.razon_social); let score=0; for(const w of palabras) if(rs.includes(w)) score+=w.length; if(score>bestScore){bestScore=score;best=f;} }
+  if(best&&bestScore>=6){
+    const emp=norm(best.razon_social);
+    const elegida=[...candsNombre].filter(f=>norm(f.razon_social)===emp).sort((a,b)=>a.fecha_doc.localeCompare(b.fecha_doc))[0]||best;
+    return {factura:elegida.factura,razon:elegida.razon_social,motivo:(pago.ordenante?'Ordenante interbancario':'Nombre en descripción')+' — más antigua',confianza:'media'};
+  }
+  return null;
+}
+
+// ─── ACCIONES ────────────────────────────────────────────────────────────────
+function migrarFacturas(){
+  PAGOS.forEach(p=>{ if(!p.facturas) p.facturas=p.facturaAsignada?[{factura:p.facturaAsignada,razon:p.razonAsignada||''}]:[{factura:'',razon:''}]; });
+}
+
+async function confirmar(id){
+  const p=PAGOS.find(x=>x.id===id);
+  if(!p||!p.facturas.some(f=>f.factura)) return;
+  // Guardar en Supabase
+  const rows=p.facturas.filter(f=>f.factura).map(f=>({
+    operacion:String(p.operacion), factura:f.factura, razon:f.razon||'',
+    importe_factura:FACTURAS.find(x=>x.factura===f.factura)?.saldo||p.monto,
+    estado:'confirmado', motivo:p.motivo||'', confianza:p.confianza||''
+  }));
+  const {error}=await db.from('conciliaciones').upsert(rows,{onConflict:'operacion,factura'});
+  if(error){ toast('Error guardando: '+error.message,''); return; }
+  p.estado='confirmado'; actualizarStats(); render(); toast('Confirmado y guardado ✓','green');
+}
+
+async function quitar(id){
+  const p=PAGOS.find(x=>x.id===id);
+  if(!p) return;
+  await db.from('conciliaciones').delete().eq('operacion',String(p.operacion));
+  p.estado='pendiente'; p.facturas=[{factura:'',razon:''}]; p.motivo=''; p.confianza='';
+  actualizarStats(); render(); toast('Asignación eliminada','');
+}
+
+function agregarLinea(id){ const p=PAGOS.find(x=>x.id===id); if(p){p.facturas.push({factura:'',razon:''});render();} }
+function quitarLinea(id,idx){ const p=PAGOS.find(x=>x.id===id); if(!p) return; if(p.facturas.length<=1){p.facturas=[{factura:'',razon:''}];}else{p.facturas.splice(idx,1);} p.estado=p.facturas.some(f=>f.factura)?'manual':'pendiente'; actualizarStats(); render(); }
+function cambiarLinea(id,idx,val){ const p=PAGOS.find(x=>x.id===id); if(!p) return; const f=FACTURAS.find(x=>x.factura===val); p.facturas[idx]={factura:val,razon:f?f.razon_social:''}; p.estado=val?'manual':'pendiente'; p.motivo='Asignación manual'; p.confianza=''; actualizarStats(); render(); }
+
+// ─── STATS ───────────────────────────────────────────────────────────────────
+function actualizarStats(){
+  const conf=PAGOS.filter(p=>p.estado==='confirmado').length;
+  const pend=PAGOS.filter(p=>p.estado!=='confirmado').length;
+  const pct=PAGOS.length?Math.round(conf/PAGOS.length*100):0;
+  document.getElementById('st-total').textContent=PAGOS.length;
+  document.getElementById('st-conf').textContent=conf;
+  document.getElementById('st-pend').textContent=pend;
+  document.getElementById('st-pct').textContent=pct+'%';
+  document.getElementById('prog').style.width=pct+'%';
+  document.getElementById('stats-mini').textContent=conf+'/'+PAGOS.length+' confirmados';
+}
+
+function poblarFiltroMontos(){
+  const montos=[...new Set(PAGOS.map(p=>p.monto))].sort((a,b)=>a-b);
+  const sel=document.getElementById('fil-monto');
+  sel.innerHTML='<option value="todos">Todos los montos</option>';
+  montos.forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=fmtMonto(m); sel.appendChild(o); });
+}
+
+// ─── RENDER CONCILIACION ─────────────────────────────────────────────────────
+function render(){
+  migrarFacturas();
+  const fil=document.getElementById('fil-estado').value;
+  const filM=document.getElementById('fil-monto').value;
+  const busca=norm(document.getElementById('fil-busca').value);
+  let lista=PAGOS.filter(p=>{
+    if(fil==='pendiente'&&p.estado==='confirmado') return false;
+    if(fil==='confirmado'&&p.estado!=='confirmado') return false;
+    if(fil==='inter'&&!p.ordenante) return false;
+    if(filM!=='todos'&&p.monto!==parseFloat(filM)) return false;
+    if(busca){ const t=norm(p.descripcion+' '+p.operacion+' '+(p.facturas||[]).map(f=>f.factura+' '+f.razon).join(' ')+' '+(p.ordenante||'')); if(!t.includes(busca)) return false; }
+    return true;
+  });
+  document.getElementById('count-label').textContent=lista.length+' abono'+(lista.length!==1?'s':'')+' mostrado'+(lista.length!==1?'s':'');
+  if(!lista.length){ document.getElementById('lista').innerHTML='<div class="empty"><span class="empty-icon">🔍</span>Sin resultados para este filtro</div>'; return; }
+
+  const todasUsadas=id=>new Set(PAGOS.filter(p=>p.id!==id&&(p.estado==='confirmado'||p.estado==='manual')).flatMap(p=>(p.facturas||[]).map(f=>f.factura)).filter(Boolean));
+
+  document.getElementById('lista').innerHTML=lista.map(p=>{
+    const usadasOtros=todasUsadas(p.id);
+    const bClass=p.estado==='confirmado'?'badge-confirmed':p.estado==='manual'?'badge-manual':p.confianza==='alta'?'badge-high':p.confianza==='media'?'badge-med':'badge-pend';
+    const bLabel=p.estado==='confirmado'?'CONFIRMADO':p.estado==='manual'?'MANUAL':p.confianza==='alta'?'SUGERIDO ✓':p.confianza==='media'?'SUGERIDO ~':'SIN ASIGNAR';
+    const cCard=p.estado==='confirmado'?'confirmed':p.estado==='manual'?'manual':p.estado==='sugerida'?'suggested':'pending';
+    const ref2ok=p.referencia2&&p.referencia2!=='Referencia Beneficiari'&&p.referencia2.length>3&&!p.referencia2.startsWith('BCP');
+    const ordenanteHtml=p.ordenante?`<div class="ordenante">↳ ${p.ordenante}</div>`:'';
+    const motivoHtml=p.motivo&&p.estado!=='confirmado'?`<div class="reason">→ ${p.motivo}</div>`:'';
+    const hayAsig=(p.facturas||[]).some(f=>f.factura);
+    const btnConf=p.estado!=='confirmado'&&hayAsig?`<button class="btn btn-confirm" onclick="confirmar(${p.id})">✓ Confirmar</button>`:'';
+    const btnQuit=hayAsig?`<button class="btn btn-remove" onclick="quitar(${p.id})">✕</button>`:'';
+
+    const lineas=(p.facturas||[{factura:'',razon:''}]).map((item,idx)=>{
+      const usadasAqui=new Set([...usadasOtros,...(p.facturas||[]).filter((_,i)=>i!==idx).map(f=>f.factura).filter(Boolean)]);
+      const opts=FACTURAS.filter(f=>!usadasAqui.has(f.factura)||f.factura===item.factura).sort((a,b)=>a.razon_social.localeCompare(b.razon_social,'es')).map(f=>{
+        const sel=item.factura===f.factura?'selected':'';
+        return `<option value="${f.factura}" ${sel}>${f.factura} — S/ ${f.saldo.toLocaleString('es-PE')} — ${f.razon_social.substring(0,35)}</option>`;
+      }).join('');
+      const btnQL=(p.facturas||[]).length>1||item.factura?`<button class="btn btn-remove" onclick="quitarLinea(${p.id},${idx})">✕</button>`:'';
+      return `<div class="factura-row"><select class="factura-select" onchange="cambiarLinea(${p.id},${idx},this.value)"><option value="">— Seleccionar factura —</option>${opts}</select>${btnQL}</div>`;
+    }).join('');
+
+    return `<div class="card ${cCard}">
+      <div class="card-top">
+        <div class="card-left">
+          <div class="desc">${p.descripcion||'(sin descripción)'}</div>
+          ${ordenanteHtml}
+          <div class="meta">${p.fecha||''} · OP ${p.operacion}${ref2ok?' · '+p.referencia2:''}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="monto">${fmtMonto(p.monto)}</div>
+          <span class="badge ${bClass}">${bLabel}</span>
+        </div>
+      </div>
+      ${lineas}
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button class="btn" onclick="agregarLinea(${p.id})" style="color:var(--text3);border-style:dashed;font-size:11px">+ agregar factura</button>
+        ${btnConf}${btnQuit}
+      </div>
+      ${motivoHtml}
+    </div>`;
+  }).join('');
+}
+
+// ─── RENDER FACTURAS ─────────────────────────────────────────────────────────
+function renderFacturas(){
+  const fil=document.getElementById('ff-estado').value;
+  const busca=norm(document.getElementById('ff-busca').value);
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+
+  let lista=FACTURAS.filter(f=>{
+    const dias=diasHasta(f.fecha_ven);
+    if(fil==='vencida'&&!(dias!==null&&dias<0)) return false;
+    if(fil==='proxima'&&!(dias!==null&&dias>=0&&dias<=7)) return false;
+    if(fil==='ok'&&!(dias===null||dias>7)) return false;
+    if(busca){ const t=norm(f.factura+' '+f.razon_social); if(!t.includes(busca)) return false; }
+    return true;
+  });
+
+  const vencidas=FACTURAS.filter(f=>{ const d=diasHasta(f.fecha_ven); return d!==null&&d<0; }).length;
+  const proximas=FACTURAS.filter(f=>{ const d=diasHasta(f.fecha_ven); return d!==null&&d>=0&&d<=7; }).length;
+  const saldoTotal=FACTURAS.reduce((a,f)=>a+(f.saldo||0),0);
+  document.getElementById('f-total').textContent=FACTURAS.length;
+  document.getElementById('f-venc').textContent=vencidas;
+  document.getElementById('f-prox').textContent=proximas;
+  document.getElementById('f-saldo').textContent=fmtMonto(saldoTotal);
+
+  if(!lista.length){ document.getElementById('fact-list').innerHTML='<div class="empty"><span class="empty-icon">🧾</span>Sin facturas que mostrar</div>'; return; }
+
+  document.getElementById('fact-list').innerHTML=lista.map(f=>{
+    const dias=diasHasta(f.fecha_ven);
+    const dotClass=dias===null?'ok':dias<0?'vencida':dias<=7?'proxima':'ok';
+    const diasLabel=dias===null?'':(dias<0?`Venció hace ${Math.abs(dias)} día${Math.abs(dias)!==1?'s':''}`:`Vence en ${dias} día${dias!==1?'s':''}`);
+    const diasColor=dias!==null&&dias<0?'color:var(--red)':dias!==null&&dias<=7?'color:var(--amber-text)':'color:var(--text3)';
+    return `<div class="fact-row">
+      <div class="dot ${dotClass}"></div>
+      <div style="flex:1;min-width:0">
+        <div class="fact-name">${f.razon_social||'—'}</div>
+        <div class="fact-num">${f.factura}</div>
+      </div>
+      <div class="fact-dates">
+        <div style="font-size:11px;color:var(--text3)">${f.fecha_doc||''}</div>
+        <div style="font-size:11px;${diasColor}">${diasLabel}</div>
+      </div>
+      <div class="fact-saldo">${fmtMonto(f.saldo)}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─── EXPORTAR ────────────────────────────────────────────────────────────────
+function exportarCSV(){
+  migrarFacturas();
+  const rows=[['Fecha','Descripcion','Ordenante','Monto Abono','Operacion - Numero','Factura_Cancelada','Empresa','Importe Factura','Saldo por Asignar','Estado']];
+  PAGOS.forEach(p=>{
+    const facts=(p.facturas||[]).filter(f=>f.factura);
+    const base=[p.fecha,p.descripcion,p.ordenante||'',p.monto,p.operacion];
+    if(!facts.length){ rows.push([...base,'','','',p.monto,p.estado]); }
+    else{
+      const sumF=facts.reduce((a,f)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; return a+(fd.saldo||0); },0);
+      const saldo=Math.round((p.monto-sumF)*100)/100;
+      facts.forEach((f,i)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; rows.push([...base,f.factura,f.razon||'',fd.saldo||'',i===facts.length-1&&saldo>0?saldo:'',p.estado]); });
+    }
+  });
+  const csv=rows.map(r=>r.map(v=>'"'+String(v||'').replace(/"/g,"'")+'"').join(',')).join('\n');
+  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='conciliacion_'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
+  toast('CSV exportado ✓','green');
+}
+
+function exportarSistema(){
+  migrarFacturas();
+  const conf=PAGOS.filter(p=>p.estado==='confirmado'||p.estado==='manual');
+  if(!conf.length){ toast('No hay abonos confirmados',''); return; }
+  const header=['ffechacan D','cdoccan C(2)','csercan C(20)','cnumcan C(20)','ccuecan C(20)','cmoncan C(1)','nimporcan N(15,2)','ntipcam N(10,6)','ccodpago C(3)','ccoddoc C(2)','cserie C(20)','cnumero C(20)','ffechadoc D','ffechaven D','ccodenti C(11)','ccodruc C(15)','crazsoc C(100)','nimportes N(15,2)','nimported N(15,2)','ccodcue C(20)','cglosa C(80)','ccodcos C(9)','ccodcos2 C(9)','nporre N(5,2)','nimpperc N(15,2)','nperdenre N(1)','cserre C(6)','cnumre C(13)','ffecre D'];
+  const dataRows=[];
+  conf.forEach(p=>{
+    const facts=(p.facturas||[]).filter(f=>f.factura);
+    const opKey=String(p.operacion).replace(/^0+/,'');
+    const bd=BD_MAP[opKey]||BD_MAP[p.operacion]||null;
+    const sumF=facts.reduce((a,f)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; return a+(parseFloat(fd.saldo)||0); },0);
+    const saldo=Math.round((p.monto-sumF)*100)/100;
+    facts.forEach((f,i)=>{
+      const fd=FACTURAS.find(x=>x.factura===f.factura)||{};
+      const importeFact=fd.saldo||p.monto;
+      const fm=f.factura.match(/([A-Z]\d+)-0*(\d+)/);
+      const serieF=fm?fm[1]:''; const correlF=fm?fm[2].padStart(8,'0'):'';
+      if(bd){ dataRows.push([bd.fecha2,bd.cdoccan,bd.banco3,bd.op,bd.cta,bd.moneda,bd.importe,bd.tc,bd.codpago,bd.tipodoc,bd.serie,bd.correl,bd.fecha5,bd.venc,bd.codid,bd.ruc,bd.razsoc,importeFact,bd.dolares||'',bd.cuenta6,bd.glosa,'','','','','','','','']); }
+      else{ dataRows.push([p.fecha,'0','',p.operacion,'','S',p.monto,'','3','1','0000000000000000'+serieF,correlF.padStart(20,'0'),fd.fecha_doc||'',fd.fecha_ven||'','1','',f.razon||'',importeFact,'','',p.descripcion?.substring(0,80)||'','','','','','','','','']); }
+      if(i===facts.length-1&&saldo>0){
+        const base=bd?[bd.fecha2,bd.cdoccan,bd.banco3,bd.op,bd.cta,bd.moneda,bd.importe,bd.tc,bd.codpago]:[p.fecha,'0','',p.operacion,'','S',p.monto,'','3'];
+        dataRows.push([...base,'','','','','','','','SALDO POR ASIGNAR',saldo,'','',bd?bd.glosa:p.descripcion?.substring(0,80)||'','','','','','','','']);
+      }
+    });
+  });
+  if(!dataRows.length){ toast('Sin facturas asignadas',''); return; }
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([header,...dataRows]);
+  ws['!cols']=header.map(()=>({wch:22}));
+  XLSX.utils.book_append_sheet(wb,ws,'Registro_cobranzas');
+  XLSX.writeFile(wb,'Registro_cobranzas_'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'.xlsx');
+  toast('Excel sistema exportado ✓ ('+dataRows.length+' filas)','green');
+}
+
+function exportarEstado(){
+  migrarFacturas();
+  const data={};
+  PAGOS.filter(p=>p.estado==='confirmado'||p.estado==='manual').forEach(p=>{ data[p.operacion]={estado:p.estado,facturas:p.facturas,motivo:p.motivo,fecha:p.fecha,descripcion:p.descripcion,monto:p.monto}; });
+  if(!Object.keys(data).length){ toast('No hay confirmaciones que guardar',''); return; }
+  const json=JSON.stringify({version:1,exportado:new Date().toISOString(),confirmaciones:data},null,2);
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([json],{type:'application/json'})); a.download='estado_'+new Date().toISOString().slice(0,10)+'.json'; a.click();
+  toast('Estado guardado ✓','green');
+}
+
+// ─── INIT ────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
