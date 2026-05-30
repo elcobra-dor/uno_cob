@@ -139,6 +139,17 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .modal-desc{font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end}
 
+/* LOGIN */
+.login-overlay{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center}
+.login-box{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:40px;width:100%;max-width:380px;box-shadow:var(--shadow-md);text-align:center}
+.login-logo{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--text);letter-spacing:1px;margin-bottom:4px}
+.login-sub{font-size:12px;color:var(--text3);margin-bottom:32px}
+.login-field{width:100%;padding:10px 14px;border:1px solid var(--border2);border-radius:8px;font-size:13px;font-family:var(--sans);background:var(--bg3);color:var(--text);outline:none;margin-bottom:12px;transition:border .15s}
+.login-field:focus{border-color:var(--green)}
+.login-btn{width:100%;padding:11px;background:var(--green);color:#fff;border:none;border-radius:8px;font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:.5px;cursor:pointer;transition:background .15s;margin-top:4px}
+.login-btn:hover{background:var(--green-text)}
+.login-error{font-size:12px;color:var(--red);margin-top:10px;display:none}
+
 /* EMPTY */
 .empty{text-align:center;padding:60px 24px;color:var(--text3);font-size:13px}
 .empty .empty-icon{font-size:40px;display:block;margin-bottom:12px}
@@ -165,6 +176,18 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 </style>
 </head>
 <body>
+
+<!-- LOGIN -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-box">
+    <div class="login-logo">CAPECO</div>
+    <div class="login-sub">Cuentas por cobrar — Acceso restringido</div>
+    <input class="login-field" type="text" id="login-user" placeholder="Usuario" onkeydown="if(event.key==='Enter')login()">
+    <input class="login-field" type="password" id="login-pass" placeholder="Contraseña" onkeydown="if(event.key==='Enter')login()">
+    <button class="login-btn" onclick="login()">INGRESAR →</button>
+    <div class="login-error" id="login-error">Usuario o contraseña incorrectos</div>
+  </div>
+</div>
 
 <!-- SIDEBAR -->
 <div class="sidebar">
@@ -768,8 +791,35 @@ function exportarEstado(){
   toast('Estado guardado ✓','green');
 }
 
+// ─── LOGIN ───────────────────────────────────────────────────────────────────
+const USUARIOS = {
+  'capeco': 'cobranza2026',
+  'antonio': 'capeco123'
+};
+function login(){
+  const user=document.getElementById('login-user').value.trim().toLowerCase();
+  const pass=document.getElementById('login-pass').value;
+  const err=document.getElementById('login-error');
+  if(USUARIOS[user]&&USUARIOS[user]===pass){
+    sessionStorage.setItem('capeco_auth',JSON.stringify({user,expiry:Date.now()+8*60*60*1000}));
+    document.getElementById('login-overlay').style.display='none';
+    err.style.display='none';
+    init();
+  } else {
+    err.style.display='block';
+    document.getElementById('login-pass').value='';
+    document.getElementById('login-pass').focus();
+  }
+}
+function checkAuth(){
+  try{
+    const a=JSON.parse(sessionStorage.getItem('capeco_auth')||'null');
+    if(a&&a.expiry>Date.now()){document.getElementById('login-overlay').style.display='none';return true;}
+  }catch(e){}
+  return false;
+}
 // ─── INIT ────────────────────────────────────────────────────────────────────
-init();
+if(checkAuth()){init();}
 </script>
 </body>
 </html>
