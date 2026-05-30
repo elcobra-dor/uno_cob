@@ -203,6 +203,12 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
     <a class="nav-item" onclick="showPage('facturas')" href="#">
       <span class="icon">🧾</span> Facturas
     </a>
+    <a class="nav-item" onclick="showPage('egresos',this)" href="#">
+      <span class="icon">📤</span> Egresos
+    </a>
+    <a class="nav-item" onclick="showPage('categorias',this)" href="#">
+      <span class="icon">⚙️</span> Categorías
+    </a>
     <div class="nav-section" style="margin-top:12px">Exportar</div>
     <a class="nav-item" onclick="exportarCSV()" href="#">
       <span class="icon">📄</span> Exportar CSV
@@ -279,6 +285,74 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
     </div>
     <div class="table-wrap" id="fact-list"></div>
   </div>
+  <!-- EGRESOS PAGE -->
+  <div id="page-egresos" class="page content">
+    <div class="stats-row">
+      <div class="stat-card"><div class="label">Total egresos</div><div class="value" id="eg-total">—</div></div>
+      <div class="stat-card" style="border-top:3px solid var(--green)"><div class="label">Clasificados</div><div class="value" style="color:var(--green-text)" id="eg-conf">—</div></div>
+      <div class="stat-card amber"><div class="label">Sin clasificar</div><div class="value" id="eg-pend">—</div></div>
+      <div class="stat-card blue"><div class="label">Total S/</div><div class="value" id="eg-monto">—</div></div>
+    </div>
+    <div class="progress-wrap"><div class="progress-bar" id="prog-eg" style="width:0%"></div></div>
+    <div class="toolbar">
+      <label>Estado:</label>
+      <select id="eg-fil-estado" onchange="renderEgresos()">
+        <option value="todos">Todos</option>
+        <option value="pendiente">Sin clasificar</option>
+        <option value="confirmado">Clasificados</option>
+      </select>
+      <select id="eg-fil-cat" onchange="renderEgresos()">
+        <option value="todos">Todas las categorías</option>
+      </select>
+      <div class="sep"></div>
+      <input type="text" id="eg-busca" placeholder="Buscar descripción, referencia..." oninput="renderEgresos()">
+      <div class="sep"></div>
+      <button class="btn-export" onclick="exportarEgresos()">Exportar CSV ↓</button>
+    </div>
+    <div class="section-hdr">
+      <div class="section-title" id="eg-count">Cargando...</div>
+    </div>
+    <div id="eg-lista"></div>
+  </div>
+
+  <!-- CATEGORIAS PAGE -->
+  <div id="page-categorias" class="page content">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <div>
+        <div style="font-size:15px;font-weight:600">Categorías del presupuesto</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:2px">Administra grupos, subgrupos y palabras clave para la clasificación automática</div>
+      </div>
+      <button class="btn btn-primary" onclick="mostrarFormCategoria()">+ Nueva categoría</button>
+    </div>
+
+    <!-- Form nueva/editar categoría -->
+    <div id="form-categoria" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:20px;box-shadow:var(--shadow)">
+      <div style="font-size:13px;font-weight:600;margin-bottom:16px" id="form-cat-title">Nueva categoría</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">GRUPO *</label>
+          <input type="text" id="cat-grupo" placeholder="ej: Gastos de Oficina" style="width:100%;padding:8px 12px;border:1px solid var(--border2);border-radius:6px;font-size:13px;background:var(--bg3);color:var(--text);outline:none">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">SUBGRUPO (opcional)</label>
+          <input type="text" id="cat-subgrupo" placeholder="ej: Luz" style="width:100%;padding:8px 12px;border:1px solid var(--border2);border-radius:6px;font-size:13px;background:var(--bg3);color:var(--text);outline:none">
+        </div>
+      </div>
+      <div style="margin-bottom:16px">
+        <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">PALABRAS CLAVE (separadas por coma)</label>
+        <input type="text" id="cat-keywords" placeholder="ej: luz,enel,electricidad,energia" style="width:100%;padding:8px 12px;border:1px solid var(--border2);border-radius:6px;font-size:13px;background:var(--bg3);color:var(--text);outline:none">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Estas palabras se buscan en la descripción y referencia del egreso para sugerir esta categoría automáticamente</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="guardarCategoria()">Guardar</button>
+        <button class="btn" onclick="cancelarFormCategoria()">Cancelar</button>
+      </div>
+      <input type="hidden" id="cat-edit-id">
+    </div>
+
+    <div class="table-wrap" id="cat-lista"></div>
+  </div>
+
 </div>
 
 <!-- UPLOAD MODAL -->
@@ -369,13 +443,18 @@ function diasHasta(fecha){
 }
 
 // ─── NAVEGACIÓN ──────────────────────────────────────────────────────────────
-function showPage(page){
+function showPage(page, el){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
-  document.getElementById('page-'+page).classList.add('active');
-  event.currentTarget.classList.add('active');
-  if(page==='conciliacion') document.getElementById('topbar-title').textContent='Conciliación bancaria';
-  if(page==='facturas'){ document.getElementById('topbar-title').textContent='Facturas pendientes'; renderFacturas(); }
+  const pg = document.getElementById('page-'+page);
+  if(pg) pg.classList.add('active');
+  if(el) el.classList.add('active');
+  else if(event&&event.currentTarget) event.currentTarget.classList.add('active');
+  const titles = {conciliacion:'Conciliación bancaria',facturas:'Facturas pendientes',egresos:'Egresos',categorias:'Administrar Categorías'};
+  document.getElementById('topbar-title').textContent = titles[page]||page;
+  if(page==='facturas') renderFacturas();
+  if(page==='egresos') renderEgresos();
+  if(page==='categorias') renderCategorias();
 }
 function showUpload(){ document.getElementById('modal-upload').classList.add('show'); }
 function hideUpload(){ document.getElementById('modal-upload').classList.remove('show'); }
@@ -490,9 +569,28 @@ async function cargarBancos(input){
   const {error}=await db.from('abonos').upsert(nuevos,{onConflict:'operacion',ignoreDuplicates:true});
   if(error){ toast('Error guardando abonos: '+error.message,''); return; }
 
+  // Separar egresos (monto negativo)
+  const egresosRaw = rows.filter(r=>parseFloat(r[colMonto])<0).map(r=>({
+    operacion: String(r[colOp]).trim(),
+    fecha: fmtFecha(r[colFecha]||''),
+    descripcion: colDesc?String(r[colDesc]).trim():'',
+    monto: Math.abs(parseFloat(r[colMonto])||0),
+    referencia2: colRef2?String(r[colRef2]).trim():'',
+    banco: r['BANCO']?String(r['BANCO']).trim():'',
+    cuenta: r['Cuenta']?String(r['Cuenta']).trim():'',
+    estado: 'pendiente'
+  })).filter(r=>r.operacion && r.monto>0);
+
+  if(egresosRaw.length){
+    const {error:ee}=await db.from('egresos').upsert(egresosRaw,{onConflict:'operacion',ignoreDuplicates:true});
+    if(ee) toast('Advertencia egresos: '+ee.message,'');
+    else toast(nuevos.length+' ingresos y '+egresosRaw.length+' egresos cargados','green');
+  } else {
+    toast(nuevos.length+' abonos cargados','green');
+  }
+
   document.getElementById('slot-bancos').classList.add('loaded');
-  document.getElementById('status-bancos').textContent=nuevos.length+' abonos';
-  toast(nuevos.length+' abonos cargados','green');
+  document.getElementById('status-bancos').textContent=nuevos.length+' ingresos · '+egresosRaw.length+' egresos';
 }
 
 async function cargarInter(input){
@@ -806,6 +904,249 @@ function exportarEstado(){
   const json=JSON.stringify({version:1,exportado:new Date().toISOString(),confirmaciones:data},null,2);
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([json],{type:'application/json'})); a.download='estado_'+new Date().toISOString().slice(0,10)+'.json'; a.click();
   toast('Estado guardado ✓','green');
+}
+
+// ─── EGRESOS ─────────────────────────────────────────────────────────────────
+let EGRESOS = [];
+let CATEGORIAS = [];
+
+async function cargarEgresosBD(){
+  const {data:edata} = await db.from('egresos').select('*').order('fecha');
+  EGRESOS = edata||[];
+  const {data:cdata} = await db.from('categorias').select('*').where ? 
+    await db.from('categorias').select('*').eq('activo',true).order('orden') :
+    await db.from('categorias').select('*').order('orden');
+  CATEGORIAS = cdata||[];
+  poblarFiltroCategorias();
+  actualizarStatsEgresos();
+}
+
+function sugerirCategoria(egreso){
+  const texto = ((egreso.descripcion||'') + ' ' + (egreso.referencia2||'')).toLowerCase();
+  let bestCat = null, bestScore = 0;
+  for(const cat of CATEGORIAS){
+    if(!cat.palabras_clave) continue;
+    const kws = cat.palabras_clave.split(',').map(k=>k.trim().toLowerCase()).filter(Boolean);
+    let score = 0;
+    for(const kw of kws){ if(kw && texto.includes(kw)) score += kw.length; }
+    if(score > bestScore){ bestScore = score; bestCat = cat; }
+  }
+  return bestScore >= 3 ? bestCat : null;
+}
+
+function poblarFiltroCategorias(){
+  const sel = document.getElementById('eg-fil-cat');
+  if(!sel) return;
+  const grupos = [...new Set(CATEGORIAS.map(c=>c.grupo))];
+  sel.innerHTML = '<option value="todos">Todas las categorías</option>';
+  grupos.forEach(g=>{ const o=document.createElement('option'); o.value=g; o.textContent=g; sel.appendChild(o); });
+}
+
+function actualizarStatsEgresos(){
+  const conf = EGRESOS.filter(e=>e.estado==='confirmado').length;
+  const pend = EGRESOS.filter(e=>e.estado==='pendiente').length;
+  const total = EGRESOS.reduce((a,e)=>a+(parseFloat(e.monto)||0),0);
+  const pct = EGRESOS.length ? Math.round(conf/EGRESOS.length*100) : 0;
+  const el = id => document.getElementById(id);
+  if(el('eg-total')) el('eg-total').textContent = EGRESOS.length;
+  if(el('eg-conf')) el('eg-conf').textContent = conf;
+  if(el('eg-pend')) el('eg-pend').textContent = pend;
+  if(el('eg-monto')) el('eg-monto').textContent = fmtMonto(total);
+  if(el('prog-eg')) el('prog-eg').style.width = pct+'%';
+}
+
+function renderEgresos(){
+  const fil = document.getElementById('eg-fil-estado')?.value||'todos';
+  const filCat = document.getElementById('eg-fil-cat')?.value||'todos';
+  const busca = norm(document.getElementById('eg-busca')?.value||'');
+
+  let lista = EGRESOS.filter(e=>{
+    if(fil==='pendiente' && e.estado==='confirmado') return false;
+    if(fil==='confirmado' && e.estado!=='confirmado') return false;
+    if(filCat!=='todos' && e.categoria_nombre && !e.categoria_nombre.includes(filCat)) return false;
+    if(busca){
+      const t = norm((e.descripcion||'')+' '+(e.referencia2||'')+' '+(e.categoria_nombre||''));
+      if(!t.includes(busca)) return false;
+    }
+    return true;
+  });
+
+  document.getElementById('eg-count').textContent = lista.length+' egreso'+(lista.length!==1?'s':'')+' mostrado'+(lista.length!==1?'s':'');
+
+  if(!lista.length){
+    document.getElementById('eg-lista').innerHTML='<div class="empty"><span class="empty-icon">📤</span>Sin egresos que mostrar</div>';
+    return;
+  }
+
+  document.getElementById('eg-lista').innerHTML = lista.map(e=>{
+    const sug = e.estado==='pendiente' ? sugerirCategoria(e) : null;
+    const catNombre = e.categoria_nombre || (sug ? (sug.grupo+(sug.subgrupo?' / '+sug.subgrupo:'')) : '');
+    const bClass = e.estado==='confirmado'?'badge-confirmed':sug?'badge-med':'badge-pend';
+    const bLabel = e.estado==='confirmado'?'CLASIFICADO':sug?'SUGERIDO ~':'SIN CLASIFICAR';
+    const cCard = e.estado==='confirmado'?'confirmed':sug?'suggested':'pending';
+
+    // Build category options grouped by grupo
+    const grupos = [...new Set(CATEGORIAS.map(c=>c.grupo))];
+    const opts = grupos.map(g=>{
+      const subs = CATEGORIAS.filter(c=>c.grupo===g);
+      const subOpts = subs.map(c=>{
+        const val = c.id;
+        const label = c.subgrupo ? `${c.grupo} / ${c.subgrupo}` : c.grupo;
+        const sel = e.categoria_id===c.id ? 'selected' : (sug&&sug.id===c.id&&e.estado==='pendiente'?'selected':'');
+        return `<option value="${val}" ${sel}>${label}</option>`;
+      }).join('');
+      return `<optgroup label="${g}">${subOpts}</optgroup>`;
+    }).join('');
+
+    const ref2show = e.referencia2 && e.referencia2.length>2 ? ` · ${e.referencia2}` : '';
+    const sugerido = sug && e.estado==='pendiente' ? `<div class="reason">→ Sugerido: ${sug.grupo}${sug.subgrupo?' / '+sug.subgrupo:''}</div>` : '';
+    const btnConf = e.estado!=='confirmado' ? `<button class="btn btn-confirm" onclick="confirmarEgreso('${e.id}',this)">✓ Confirmar</button>` : '';
+    const btnElim = `<button class="btn btn-remove" onclick="eliminarEgreso('${e.id}')" style="margin-left:auto">🗑</button>`;
+
+    return `<div class="card ${cCard}" id="eg-${e.id}">
+      <div class="card-top">
+        <div class="card-left">
+          <div class="desc">${e.descripcion||'(sin descripción)'}</div>
+          <div class="meta">${e.fecha||''} · OP ${e.operacion}${ref2show}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="monto" style="color:var(--red)">-${fmtMonto(e.monto)}</div>
+          <span class="badge ${bClass}">${bLabel}</span>
+        </div>
+      </div>
+      <div class="factura-row">
+        <select class="factura-select" onchange="cambiarCategoriaEgreso('${e.id}',this.value)" ${e.estado==='confirmado'?'disabled':''}>
+          <option value="">— Seleccionar categoría —</option>
+          ${opts}
+        </select>
+        ${btnConf}
+        ${btnElim}
+      </div>
+      ${sugerido}
+    </div>`;
+  }).join('');
+}
+
+async function cambiarCategoriaEgreso(id, catId){
+  const e = EGRESOS.find(x=>x.id===id);
+  if(!e) return;
+  const cat = CATEGORIAS.find(c=>c.id===catId);
+  e.categoria_id = catId;
+  e.categoria_nombre = cat ? (cat.grupo+(cat.subgrupo?' / '+cat.subgrupo:'')) : '';
+  e.estado = catId ? 'pendiente' : 'pendiente'; // stays pending until confirmed
+}
+
+async function confirmarEgreso(id, btn){
+  const e = EGRESOS.find(x=>x.id===id);
+  if(!e||!e.categoria_id){ toast('Selecciona una categoría primero',''); return; }
+  const {error} = await db.from('egresos').update({
+    categoria_id: e.categoria_id,
+    categoria_nombre: e.categoria_nombre,
+    estado: 'confirmado'
+  }).eq('id', id);
+  if(error){ toast('Error: '+error.message,''); return; }
+  e.estado = 'confirmado';
+  actualizarStatsEgresos();
+  renderEgresos();
+  toast('Egreso clasificado ✓','green');
+}
+
+async function eliminarEgreso(id){
+  if(!confirm('¿Eliminar este egreso permanentemente?')) return;
+  const {error} = await db.from('egresos').delete().eq('id', id);
+  if(error){ toast('Error: '+error.message,''); return; }
+  EGRESOS = EGRESOS.filter(x=>x.id!==id);
+  actualizarStatsEgresos();
+  renderEgresos();
+  toast('Egreso eliminado','');
+}
+
+function exportarEgresos(){
+  const rows=[['Fecha','Descripcion','Referencia','Monto','Operacion','Categoria','Estado']];
+  EGRESOS.forEach(e=>{
+    rows.push([e.fecha, '"'+(e.descripcion||'')+'"', '"'+(e.referencia2||'')+'"',
+      e.monto, e.operacion, '"'+(e.categoria_nombre||'')+'"', e.estado]);
+  });
+  const csv=rows.map(r=>r.join(',')).join('
+');
+  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='egresos_'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
+  toast('CSV egresos exportado ✓','green');
+}
+
+// ─── CATEGORIAS ───────────────────────────────────────────────────────────────
+function renderCategorias(){
+  const lista = document.getElementById('cat-lista');
+  if(!lista) return;
+  if(!CATEGORIAS.length){ lista.innerHTML='<div class="empty"><span class="empty-icon">⚙️</span>Sin categorías cargadas</div>'; return; }
+
+  const grupos = [...new Set(CATEGORIAS.map(c=>c.grupo))];
+  lista.innerHTML = grupos.map(g=>{
+    const items = CATEGORIAS.filter(c=>c.grupo===g);
+    const rows = items.map(c=>`
+      <div class="fact-row">
+        <div style="flex:1">
+          <div class="fact-name">${c.grupo}${c.subgrupo?' <span style="color:var(--text3)">/ '+c.subgrupo+'</span>':''}</div>
+          <div class="fact-num" style="color:var(--text3);font-size:11px">${c.palabras_clave||'Sin palabras clave'}</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn" onclick="editarCategoria('${c.id}')" style="font-size:11px">✏️ Editar</button>
+          <button class="btn btn-remove" onclick="toggleCategoria('${c.id}',${!c.activo})" style="font-size:11px">${c.activo?'Desactivar':'Activar'}</button>
+        </div>
+      </div>`).join('');
+    return `<div style="border-bottom:2px solid var(--border);padding:12px 0 4px;margin-bottom:4px">
+      <div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.5px;padding:0 16px 8px;text-transform:uppercase">${g}</div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+function mostrarFormCategoria(){ document.getElementById('form-categoria').style.display='block'; document.getElementById('cat-edit-id').value=''; document.getElementById('cat-grupo').value=''; document.getElementById('cat-subgrupo').value=''; document.getElementById('cat-keywords').value=''; document.getElementById('form-cat-title').textContent='Nueva categoría'; }
+function cancelarFormCategoria(){ document.getElementById('form-categoria').style.display='none'; }
+
+function editarCategoria(id){
+  const cat = CATEGORIAS.find(c=>c.id===id);
+  if(!cat) return;
+  document.getElementById('form-categoria').style.display='block';
+  document.getElementById('cat-edit-id').value=id;
+  document.getElementById('cat-grupo').value=cat.grupo;
+  document.getElementById('cat-subgrupo').value=cat.subgrupo||'';
+  document.getElementById('cat-keywords').value=cat.palabras_clave||'';
+  document.getElementById('form-cat-title').textContent='Editar categoría';
+  document.getElementById('form-categoria').scrollIntoView({behavior:'smooth'});
+}
+
+async function guardarCategoria(){
+  const id = document.getElementById('cat-edit-id').value;
+  const grupo = document.getElementById('cat-grupo').value.trim();
+  const subgrupo = document.getElementById('cat-subgrupo').value.trim();
+  const keywords = document.getElementById('cat-keywords').value.trim();
+  if(!grupo){ toast('El grupo es obligatorio',''); return; }
+  const data = {grupo, subgrupo:subgrupo||null, palabras_clave:keywords||null, activo:true};
+  let error;
+  if(id){
+    ({error} = await db.from('categorias').update(data).eq('id',id));
+    if(!error){ const i=CATEGORIAS.findIndex(c=>c.id===id); if(i>=0) CATEGORIAS[i]={...CATEGORIAS[i],...data}; }
+  } else {
+    const {data:nuevo, error:e} = await db.from('categorias').insert({...data,orden:999}).select().single();
+    error=e;
+    if(!error&&nuevo) CATEGORIAS.push(nuevo);
+  }
+  if(error){ toast('Error: '+error.message,''); return; }
+  cancelarFormCategoria();
+  renderCategorias();
+  poblarFiltroCategorias();
+  toast((id?'Categoría actualizada':'Categoría creada')+' ✓','green');
+}
+
+async function toggleCategoria(id, activar){
+  const {error} = await db.from('categorias').update({activo:activar}).eq('id',id);
+  if(error){ toast('Error: '+error.message,''); return; }
+  const cat = CATEGORIAS.find(c=>c.id===id);
+  if(cat) cat.activo = activar;
+  renderCategorias();
+  toast((activar?'Categoría activada':'Categoría desactivada'),'');
 }
 
 // ─── LOGIN ───────────────────────────────────────────────────────────────────
