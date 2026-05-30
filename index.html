@@ -595,6 +595,22 @@ async function quitar(id){
   actualizarStats(); render(); toast('Asignación eliminada','');
 }
 
+async function eliminarAbono(id){
+  const p=PAGOS.find(x=>x.id===id);
+  if(!p) return;
+  if(!confirm(`¿Eliminar permanentemente el abono\nOP ${p.operacion} — ${p.descripcion}?\n\nEsta acción no se puede deshacer.`)) return;
+  // Borrar conciliaciones asociadas
+  await db.from('conciliaciones').delete().eq('operacion',String(p.operacion));
+  // Borrar abono
+  const {error}=await db.from('abonos').delete().eq('operacion',String(p.operacion));
+  if(error){ toast('Error al eliminar: '+error.message,''); return; }
+  // Quitar de memoria
+  PAGOS.splice(PAGOS.findIndex(x=>x.id===id),1);
+  actualizarStats();
+  render();
+  toast('Abono eliminado ✓','');
+}
+
 function agregarLinea(id){ const p=PAGOS.find(x=>x.id===id); if(p){p.facturas.push({factura:'',razon:''});render();} }
 function quitarLinea(id,idx){ const p=PAGOS.find(x=>x.id===id); if(!p) return; if(p.facturas.length<=1){p.facturas=[{factura:'',razon:''}];}else{p.facturas.splice(idx,1);} p.estado=p.facturas.some(f=>f.factura)?'manual':'pendiente'; actualizarStats(); render(); }
 function cambiarLinea(id,idx,val){ const p=PAGOS.find(x=>x.id===id); if(!p) return; const f=FACTURAS.find(x=>x.factura===val); p.facturas[idx]={factura:val,razon:f?f.razon_social:''}; p.estado=val?'manual':'pendiente'; p.motivo='Asignación manual'; p.confianza=''; actualizarStats(); render(); }
@@ -648,7 +664,8 @@ function render(){
     const motivoHtml=p.motivo&&p.estado!=='confirmado'?`<div class="reason">→ ${p.motivo}</div>`:'';
     const hayAsig=(p.facturas||[]).some(f=>f.factura);
     const btnConf=p.estado!=='confirmado'&&hayAsig?`<button class="btn btn-confirm" onclick="confirmar(${p.id})">✓ Confirmar</button>`:'';
-    const btnQuit=hayAsig?`<button class="btn btn-remove" onclick="quitar(${p.id})">✕</button>`:'';
+    const btnQuit=hayAsig?`<button class="btn btn-remove" onclick="quitar(${p.id})">✕ Quitar</button>`:'';
+    const btnDel=`<button class="btn btn-remove" onclick="eliminarAbono(${p.id})" title="Eliminar abono permanentemente" style="margin-left:auto">🗑 Eliminar</button>`;
 
     const lineas=(p.facturas||[{factura:'',razon:''}]).map((item,idx)=>{
       const usadasAqui=new Set([...usadasOtros,...(p.facturas||[]).filter((_,i)=>i!==idx).map(f=>f.factura).filter(Boolean)]);
@@ -673,9 +690,9 @@ function render(){
         </div>
       </div>
       ${lineas}
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;width:100%">
         <button class="btn" onclick="agregarLinea(${p.id})" style="color:var(--text3);border-style:dashed;font-size:11px">+ agregar factura</button>
-        ${btnConf}${btnQuit}
+        ${btnConf}${btnQuit}${btnDel}
       </div>
       ${motivoHtml}
     </div>`;
