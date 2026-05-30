@@ -182,7 +182,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
   <div class="login-box">
     <div class="login-logo">CAPECO</div>
     <div class="login-sub">Cuentas por cobrar — Acceso restringido</div>
-    <input class="login-field" type="text" id="login-user" placeholder="Usuario" onkeydown="if(event.key==='Enter')login()">
+    <input class="login-field" type="email" id="login-user" placeholder="Correo electronico" onkeydown="if(event.key==='Enter')login()">
     <input class="login-field" type="password" id="login-pass" placeholder="Contraseña" onkeydown="if(event.key==='Enter')login()">
     <button class="login-btn" onclick="login()">INGRESAR →</button>
     <div class="login-error" id="login-error">Usuario o contraseña incorrectos</div>
@@ -398,7 +398,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 <script>
 // ─── SUPABASE ────────────────────────────────────────────────────────────────
 const SUPA_URL = 'https://olfbhboheiewqugmiqvy.supabase.co';
-const SUPA_KEY = 'sb_publishable_GwIxZqcQJmQaRKlirlngwg_e3j0gTbv';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sZmJoYm9oZWlld3F1Z21pcXZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NDM3MjQsImV4cCI6MjA5NTIxOTcyNH0.-7wMmoT1AnPtLiNiEnqbZifksXOOUZF8Eg-pZG8J_mE';
 const { createClient } = supabase;
 const db = createClient(SUPA_URL, SUPA_KEY);
 
@@ -466,6 +466,7 @@ async function init(){
     if(error) throw error;
     document.getElementById('db-status').textContent='🟢 Base de datos OK';
     await cargarDesdeBD();
+    await cargarEgresosBD();
   }catch(e){
     document.getElementById('db-status').textContent='🔴 Sin conexión';
     toast('Error de conexión: '+e.message,'');
@@ -913,9 +914,7 @@ let CATEGORIAS = [];
 async function cargarEgresosBD(){
   const {data:edata} = await db.from('egresos').select('*').order('fecha');
   EGRESOS = edata||[];
-  const {data:cdata} = await db.from('categorias').select('*').where ? 
-    await db.from('categorias').select('*').eq('activo',true).order('orden') :
-    await db.from('categorias').select('*').order('orden');
+  const {data:cdata} = await db.from('categorias').select('*').eq('activo',true).order('orden');
   CATEGORIAS = cdata||[];
   poblarFiltroCategorias();
   actualizarStatsEgresos();
@@ -1067,8 +1066,7 @@ function exportarEgresos(){
     rows.push([e.fecha, '"'+(e.descripcion||'')+'"', '"'+(e.referencia2||'')+'"',
       e.monto, e.operacion, '"'+(e.categoria_nombre||'')+'"', e.estado]);
   });
-  const csv=rows.map(r=>r.join(',')).join('
-');
+  const csv=rows.map(r=>r.join(',')).join('\n');
   const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   a.download='egresos_'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
@@ -1149,35 +1147,59 @@ async function toggleCategoria(id, activar){
   toast((activar?'Categoría activada':'Categoría desactivada'),'');
 }
 
-// ─── LOGIN ───────────────────────────────────────────────────────────────────
-const USUARIOS = {
-  'capeco': 'cobranza2026',
-  'antonio': 'capeco123'
-};
-function login(){
-  const user=document.getElementById('login-user').value.trim().toLowerCase();
-  const pass=document.getElementById('login-pass').value;
-  const err=document.getElementById('login-error');
-  if(USUARIOS[user]&&USUARIOS[user]===pass){
-    sessionStorage.setItem('capeco_auth',JSON.stringify({user,expiry:Date.now()+8*60*60*1000}));
-    document.getElementById('login-overlay').style.display='none';
-    err.style.display='none';
-    init();
-  } else {
-    err.style.display='block';
-    document.getElementById('login-pass').value='';
+// ─── LOGIN SEGURO CON SUPABASE ───────────────────────────────────────────────
+async function login(){
+  const email = document.getElementById('login-user').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  const err = document.getElementById('login-error');
+  const btn = document.querySelector('.login-btn');
+
+  // Cambiamos el texto del botón para mostrar que está cargando
+  btn.textContent = 'VERIFICANDO...';
+  btn.disabled = true;
+
+  // Supabase verifica el correo y la contraseña
+  const { data, error } = await db.auth.signInWithPassword({
+    email: email,
+    password: pass
+  });
+
+  if (error) {
+    // Si la contraseña o el correo están mal
+    err.textContent = 'Correo o contraseña incorrectos';
+    err.style.display = 'block';
+    document.getElementById('login-pass').value = '';
     document.getElementById('login-pass').focus();
+    btn.textContent = 'INGRESAR →';
+    btn.disabled = false;
+  } else {
+    // Si todo está bien, ocultamos la pantalla y cargamos los datos
+    document.getElementById('login-overlay').style.display = 'none';
+    err.style.display = 'none';
+    init(); 
   }
 }
-function checkAuth(){
-  try{
-    const a=JSON.parse(sessionStorage.getItem('capeco_auth')||'null');
-    if(a&&a.expiry>Date.now()){document.getElementById('login-overlay').style.display='none';return true;}
-  }catch(e){}
-  return false;
+
+async function checkAuth(){
+  // Revisa si ya hay una sesión activa guardada por Supabase
+  const { data: { session } } = await db.auth.getSession();
+  
+  if (session) {
+    document.getElementById('login-overlay').style.display = 'none';
+    return true; 
+  } else {
+    document.getElementById('login-overlay').style.display = 'flex';
+    return false;
+  }
 }
+
 // ─── INIT ────────────────────────────────────────────────────────────────────
-if(checkAuth()){init();}
+// Inicia el sistema automáticamente si el usuario ya había iniciado sesión antes
+checkAuth().then(tieneSesion => {
+  if(tieneSesion){
+    init();
+  }
+});
 </script>
 </body>
 </html>
