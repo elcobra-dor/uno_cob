@@ -218,17 +218,52 @@ async function cargarBancos(input){
 }
 
 async function cargarInter(input){
-  const wb=await leerExcel(input.files[0]);
-  const ws=wb.Sheets[wb.SheetNames[0]];
-  const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
-  const keys=rows.length?Object.keys(rows[0]):[];
-  const colOp=keys.find(k=>/n.*operaci|operaci.*n/i.test(k));
-  const colOrd=keys.find(k=>/ordenante/i.test(k));
-  if(!colOp||!colOrd){ alert('No se detectaron columnas de Operación u Ordenante.'); return; }
-  rows.forEach(r=>{ const op=String(r[colOp]).trim(); if(op) INTER_MAP[op]=String(r[colOrd]).trim(); });
+  const wb = await leerExcel(input.files[0]);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
+  
+  let headerIdx = -1, colOpKey = '', colOrdKey = '';
+
+  for (let i = 0; i < Math.min(data.length, 10); i++) {
+    const row = data[i];
+    if (!row || row.length === 0) continue;
+    const keys = row.map(c => String(c).trim());
+    
+    // Busca columnas que digan "Operación" pero que tengan "Número" o "N°", ignorando la de "Tipo"
+    const op = keys.find(k => /num|n°|n[úu]mero/i.test(k) && /operaci/i.test(k)) || keys.find(k => /operaci/i.test(k) && !/tipo/i.test(k));
+    const ord = keys.find(k => /ordenante/i.test(k));
+    
+    if (op && ord) { headerIdx = i; colOpKey = op; colOrdKey = ord; break; }
+  }
+
+  if (headerIdx === -1) {
+    const rowsBackup = XLSX.utils.sheet_to_json(ws, {defval: ''});
+    const keysBackup = rowsBackup.length ? Object.keys(rowsBackup[0]) : [];
+    colOpKey = keysBackup.find(k => /num|n°|n[úu]mero/i.test(k) && /operaci/i.test(k)) || keysBackup.find(k => /operaci/i.test(k) && !/tipo/i.test(k));
+    colOrdKey = keysBackup.find(k => /ordenante/i.test(k));
+    
+    if (!colOpKey || !colOrdKey) { alert('No se detectaron las columnas de N° de Operación u Ordenante.'); return; }
+    
+    rowsBackup.forEach(r => {
+      const op = String(r[colOpKey]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
+      if (op) INTER_MAP[op] = String(r[colOrdKey]).trim();
+    });
+  } else {
+    const headers = data[headerIdx].map(c => String(c).trim());
+    const opIdx = headers.indexOf(colOpKey), cbOrdIdx = headers.indexOf(colOrdKey);
+    
+    for (let i = headerIdx + 1; i < data.length; i++) {
+      const row = data[i];
+      if (!row || row.length <= Math.max(opIdx, cbOrdIdx)) continue;
+      const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
+      const ord = String(row[cbOrdIdx]).trim();
+      if (op) INTER_MAP[op] = ord;
+    }
+  }
+  
   document.getElementById('slot-inter').classList.add('loaded');
-  document.getElementById('status-inter').textContent=Object.keys(INTER_MAP).length+' registros';
-  toast('Interbancarios cargados','green');
+  document.getElementById('status-inter').textContent = Object.keys(INTER_MAP).length + ' registros';
+  toast('Interbancarios cargados', 'green');
 }
 
 async function cargarBD(input){
@@ -249,8 +284,23 @@ async function cargarBD(input){
 }
 
 async function procesarYCerrar(){
-  PAGOS.forEach(p=>{ const ord=INTER_MAP[String(p.operacion)]; if(ord) p.ordenante=ord; });
+  // 1. Descargamos los datos de abonos y facturas
   await cargarDesdeBD();
+  
+  // 2. Descargamos los egresos para que no se queden en blanco (Soluciona consulta 2)
+  await cargarEgresosBD();
+  
+  // 3. Cruzamos los ordenantes sin importar los ceros a la izquierda (Soluciona consulta 1 y 3)
+  PAGOS.forEach(p=>{ 
+    const opClean = String(p.operacion).trim().replace(/^0+/,'');
+    const ord = INTER_MAP[opClean]; 
+    if(ord) p.ordenante = ord; 
+  });
+  
+  // 4. Dibujamos la pantalla
+  render();
+  renderEgresos();
+  
   hideUpload();
 }
 
