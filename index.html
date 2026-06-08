@@ -75,16 +75,17 @@
     <div class="progress-wrap"><div class="progress-bar" id="prog" style="width:0%"></div></div>
 
     <div class="toolbar">
-      <label>Filtrar:</label>
-      <select id="fil-estado" onchange="render()">
-        <option value="todos">Todos</option>
-        <option value="pendiente">Sin confirmar</option>
-        <option value="confirmado">Confirmados</option>
-        <option value="inter">Con ordenante</option>
+      <label>Estado:</label>
+      <select id="ff-estado" onchange="renderFacturas()">
+        <option value="todos">Todas</option>
+        <option value="vencida">Vencidas</option>
+        <option value="proxima">Por vencer</option>
+        <option value="ok">Al día</option>
       </select>
-      <select id="fil-monto" onchange="render()"><option value="todos">Todos los montos</option></select>
       <div class="sep"></div>
-      <input type="text" id="fil-busca" placeholder="Buscar empresa, factura, N° op..." oninput="buscarConciliacionDebounced()">
+      <input type="text" id="ff-busca" placeholder="Buscar empresa o factura..." oninput="buscarFacturasDebounced()" style="width: 220px">
+      <div class="sep"></div>
+      <button class="btn-export" onclick="exportarEstadoCuentaPDF()" title="Genera el estado de cuenta en formato PDF para el cliente">📊 Estado de Cuenta PDF</button>
     </div>
 
     <div class="section-hdr">
