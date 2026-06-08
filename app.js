@@ -174,9 +174,16 @@ async function cargarBancos(input){
   const colMonto=keys.find(k=>/^monto$/i.test(k))||keys.find(k=>/importe|amount/i.test(k));
   const colOp=keys.find(k=>/operaci.*n.*n.m/i.test(k))||keys.find(k=>/n.m.*operaci/i.test(k));
   const colRef2=keys.find(k=>/referencia2|ref.*2/i.test(k))||keys.find(k=>/referencia/i.test(k));
+  const colFacturaBancos=keys.find(k=>/factura/i.test(k)); // Identifica la columna Factura en el Excel del banco
+
   if(!colMonto||!colOp){ alert('No se detectaron columnas de Monto u Operación.'); return; }
 
-  const nuevos=rows.filter(r=>parseFloat(r[colMonto])>0).map(r=>({
+  const nuevos=rows.filter(r=>{
+    const esAbono = parseFloat(r[colMonto]) > 0;
+    // Pasa la prueba solo si no hay texto en la columna Factura (o si la columna no existe)
+    const facturaVacia = !colFacturaBancos || String(r[colFacturaBancos]).trim() === '';
+    return esAbono && facturaVacia;
+  }).map(r=>({
     operacion:String(r[colOp]).trim(),
     fecha:fmtFecha(r[colFecha]||''),
     descripcion:colDesc?String(r[colDesc]).trim():'',
