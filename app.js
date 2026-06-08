@@ -494,23 +494,37 @@ function renderFacturas(){
   document.getElementById('fact-list').innerHTML=lista.map(f=>{
     const dias=diasHasta(f.fecha_ven);
     const dotClass=dias===null?'ok':dias<0?'vencida':dias<=7?'proxima':'ok';
-    const diasLabel=dias===null?'':(dias<0?`Venció hace ${Math.abs(dias)} día${Math.abs(dias)!==1?'s':''}`:`Vence en ${dias} día${dias!==1?'s':''}`);
-    const diasColor=dias!==null&&dias<0?'color:var(--red)':dias!==null&&dias<=7?'color:var(--amber-text)':'color:var(--text3)';
+    
+    let diasLabel = 'Al día';
+    let diasColor = 'color: #10b981; font-weight: 500;';
+    
+    if (dias !== null) {
+      if (dias < 0) {
+        diasLabel = `⚠️ VENCIDA (${Math.abs(dias)} días de atraso)`;
+        diasColor = 'color: #e3000f; font-weight: 600; background: #ffe6e6; padding: 3px 6px; border-radius: 4px;';
+      } else if (dias <= 7) {
+        diasLabel = `⏱️ Por vencer en ${dias} días`;
+        diasColor = 'color: #d97706; font-weight: 600; background: #fef3c7; padding: 3px 6px; border-radius: 4px;';
+      } else {
+        diasLabel = `Vence en ${dias} días`;
+        diasColor = 'color: var(--text3);';
+      }
+    }
+
     return `<div class="fact-row">
       <div class="dot ${dotClass}"></div>
       <div style="flex:1;min-width:0">
         <div class="fact-name">${escaparHTML(f.razon_social)||'—'}</div>
         <div class="fact-num">${escaparHTML(f.factura)}</div>
       </div>
-      <div class="fact-dates">
-        <div style="font-size:11px;color:var(--text3)">${f.fecha_doc||''}</div>
+      <div class="fact-dates" style="display:flex; flex-direction:column; align-items:flex-end; gap:5px;">
+        <div style="font-size:11px;color:var(--text3)">F. Emisión: ${f.fecha_doc||''}</div>
         <div style="font-size:11px;${diasColor}">${diasLabel}</div>
       </div>
-      <div class="fact-saldo">${fmtMonto(f.saldo)}</div>
+      <div class="fact-saldo" style="margin-left:15px;">${fmtMonto(f.saldo)}</div>
     </div>`;
   }).join('');
 }
-
 // ─── EXPORTAR ────────────────────────────────────────────────────────────────
 function exportarCSV(){
   migrarFacturas();
@@ -859,3 +873,130 @@ checkAuth().then(tieneSesion => {
     init();
   }
 });
+function exportarEstadoCuentaPDF() {
+  const busquedaInput = document.getElementById('ff-busca').value.trim();
+  
+  if (!busquedaInput || busquedaInput.length < 3) {
+    alert('Por favor, escribe el nombre del cliente en el buscador para generar su Estado de Cuenta.');
+    return;
+  }
+
+  const buscaNorm = norm(busquedaInput);
+  const facturasCliente = FACTURAS.filter(f => norm(f.razon_social).includes(buscaNorm) || norm(f.factura).includes(buscaNorm));
+
+  if (!facturasCliente.length) {
+    alert('No se encontraron facturas pendientes para este cliente.');
+    return;
+  }
+
+  const clienteNombre = facturasCliente[0].razon_social || 'Cliente';
+  let totalDeuda = 0;
+
+  const filasHTML = facturasCliente.map(f => {
+    const dias = diasHasta(f.fecha_ven);
+    let diasTexto = '-';
+    let colorDias = '';
+    
+    if (dias !== null && dias < 0) {
+      diasTexto = Math.abs(dias) + ' días';
+      colorDias = 'color: #e3000f; font-weight: bold;';
+    } else if (dias !== null) {
+      diasTexto = 'Al día';
+    }
+
+    totalDeuda += parseFloat(f.saldo || 0);
+    const montoFormateado = parseFloat(f.saldo || 0).toLocaleString('es-PE', {minimumFractionDigits: 2});
+
+    return `
+      <tr>
+        <td>${f.fecha_doc || ''}</td>
+        <td>${escaparHTML(f.factura)}</td>
+        <td style="${colorDias}">${diasTexto}</td>
+        <td class="amount right">${montoFormateado}</td>
+        <td>SALDO PENDIENTE - POR REGULARIZAR</td>
+      </tr>
+    `;
+  }).join('');
+
+  const hoy = new Date().toLocaleDateString('es-PE');
+
+  const html = `
+  <!DOCTYPE html>
+  <html lang="es">
+  <head>
+    <meta charset="UTF-8">
+    <title>Estado de Cuenta - ${escaparHTML(clienteNombre)}</title>
+    <style>
+      body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; color: #000; max-width: 850px; margin: 0 auto; }
+      .header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 10px; }
+      .title-area h1 { font-size: 15px; margin: 0; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold;}
+      .title-area h2 { font-size: 22px; color: #555; font-weight: normal; margin: 5px 0 0 0; }
+      .right-area { display: flex; align-items: flex-end; gap: 40px; }
+      .date { font-weight: bold; font-size: 14px; margin-bottom: 5px; }
+      .logo { max-height: 60px; max-width: 120px; object-fit: contain; } 
+      .red-line { border-top: 4px solid #e3000f; margin: 0 0 20px 0; }
+      .client-info { margin-bottom: 30px; }
+      .client-info .name { font-size: 16px; font-weight: bold; text-transform: uppercase; }
+      .client-info .ruc { font-size: 13px; margin-top: 4px; color: #333; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 25px;}
+      th { border-bottom: 2px solid #e3000f; text-align: left; padding: 8px 5px; color: #14559a; text-transform: uppercase; font-size: 12px;}
+      th.right, td.right { text-align: right; }
+      td { padding: 8px 5px; border-bottom: 1px solid #eaeaea; }
+      td.amount { color: #e3000f; font-weight: bold; }
+      .footer { display: flex; justify-content: flex-start; margin-top: 15px; padding-left: 25%; }
+      .total-label { background: #b30000; color: white; padding: 8px 15px; font-weight: bold; font-size: 14px; border-right: 1px solid #fff;}
+      .total-value { background: #b30000; color: white; padding: 8px 15px; font-weight: bold; font-size: 14px;}
+      @media print {
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="title-area">
+        <h1>Cámara Peruana de la Construcción</h1>
+        <h2>Estado de cuenta</h2>
+      </div>
+      <div class="right-area">
+        <div class="date">${hoy}</div>
+        <img src="https://www.capeco.org/wp-content/uploads/2021/04/logo-capeco.png" class="logo" alt="CAPECO">
+      </div>
+    </div>
+    <div class="red-line"></div>
+    
+    <div class="client-info">
+      <div class="name">${escaparHTML(clienteNombre)}</div>
+      <div class="ruc">Detalle de facturas pendientes</div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>F. Docum.</th>
+          <th>Documento</th>
+          <th>Atraso</th>
+          <th class="right">S/.</th>
+          <th>Detalle del producto y pago</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${filasHTML}
+      </tbody>
+    </table>
+
+    <div class="footer">
+      <div class="total-label">Total por pagar</div>
+      <div class="total-value">${parseFloat(totalDeuda).toLocaleString('es-PE', {minimumFractionDigits: 2})}</div>
+    </div>
+
+    <script>
+      window.onload = function() { setTimeout(() => window.print(), 500); }
+    </script>
+  </body>
+  </html>
+  `;
+
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+}
