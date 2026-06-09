@@ -59,9 +59,23 @@ function leerExcel(file){ return new Promise(res=>{ const r=new FileReader(); r.
 function fmtMonto(n){ return 'S/ '+parseFloat(n||0).toLocaleString('es-PE',{minimumFractionDigits:2}); }
 function diasHasta(fecha){
   if(!fecha) return null;
-  const hoy=new Date(); hoy.setHours(0,0,0,0);
-  const f=new Date(fecha+'T00:00:00');
-  return Math.round((f-hoy)/(1000*60*60*24));
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  
+  let str = String(fecha).trim();
+  
+  // Si la fecha viene en formato Día/Mes/Año (ej: 15/06/2026 o 15-06-2026), la reordena
+  const m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if(m) {
+    str = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  }
+  
+  // Creamos la fecha exacta a la medianoche para evitar saltos por zona horaria
+  const f = new Date(str.includes('T') ? str : str + 'T00:00:00');
+  
+  // Si el Excel trajo un texto que no es fecha, lo ignoramos para evitar errores
+  if(isNaN(f.getTime())) return null;
+  
+  return Math.round((f - hoy) / 86400000); // 86400000 milisegundos equivalen a 1 día exacto
 }
 
 // ─── NAVEGACIÓN ──────────────────────────────────────────────────────────────
