@@ -76,13 +76,17 @@
 
     <div class="toolbar">
       <label>Estado:</label>
-      <select id="filtro-estado" onchange="render()">
+      <select id="fil-estado" onchange="render()">
         <option value="todos">Todos</option>
         <option value="pendiente">Pendientes</option>
         <option value="confirmado">Confirmados</option>
+        <option value="inter">Interbancarios</option>
+      </select>
+      <select id="fil-monto" onchange="render()">
+        <option value="todos">Todos los montos</option>
       </select>
       <div class="sep"></div>
-      <input type="text" id="busqueda" placeholder="Buscar concepto o monto..." oninput="buscarDebounced()">
+      <input type="text" id="fil-busca" placeholder="Buscar concepto o monto..." oninput="buscarConciliacionDebounced()" style="width: 250px">
     </div>
 
     <div class="section-hdr">
