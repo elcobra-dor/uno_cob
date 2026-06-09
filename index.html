@@ -95,7 +95,7 @@
     <div id="lista"></div>
   </div>
 
-  <div id="page-facturas" class="page content" style="display:none;">
+  <div id="page-facturas" class="page content">
     <div class="stats-row">
       <div class="stat-card"><div class="label">Total facturas</div><div class="value" id="f-total">—</div></div>
       <div class="stat-card" style="border-top:3px solid var(--red)"><div class="label">Vencidas</div><div class="value" style="color:var(--red)" id="f-venc">—</div></div>
@@ -111,14 +111,14 @@
         <option value="ok">Al día</option>
       </select>
       <div class="sep"></div>
-      <input type="text" id="ff-busca" placeholder="Buscar empresa o factura..." oninput="renderFacturas()" style="width:220px">
+      <input type="text" id="ff-busca" placeholder="Buscar empresa o factura..." oninput="buscarFacturasDebounced()" style="width:220px">
       <div class="sep"></div>
       <button class="btn-export" onclick="exportarEstadoCuentaPDF()" title="Genera el estado de cuenta en formato PDF para el cliente">📊 Estado de Cuenta PDF</button>
     </div>
     <div class="table-wrap" id="fact-list"></div>
   </div>
   
-  <div id="page-egresos" class="page content" style="display:none;">
+  <div id="page-egresos" class="page content">
     <div class="stats-row">
       <div class="stat-card"><div class="label">Total egresos</div><div class="value" id="eg-total">—</div></div>
       <div class="stat-card" style="border-top:3px solid var(--green)"><div class="label">Clasificados</div><div class="value" style="color:var(--green-text)" id="eg-conf">—</div></div>
@@ -137,7 +137,7 @@
         <option value="todos">Todas las categorías</option>
       </select>
       <div class="sep"></div>
-      <input type="text" id="eg-busca" placeholder="Buscar descripción, referencia..." oninput="renderEgresos()">
+      <input type="text" id="eg-busca" placeholder="Buscar descripción, referencia..." oninput="buscarEgresosDebounced()">
       <div class="sep"></div>
       <button class="btn-export" onclick="exportarEgresos()">Exportar CSV ↓</button>
     </div>
@@ -147,7 +147,7 @@
     <div id="eg-lista"></div>
   </div>
 
-  <div id="page-categorias" class="page content" style="display:none;">
+  <div id="page-categorias" class="page content">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
       <div>
         <div style="font-size:15px;font-weight:600">Categorías del presupuesto</div>
