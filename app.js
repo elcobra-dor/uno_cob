@@ -110,6 +110,8 @@ function showPage(page, el){
   if(page==='categorias') renderCategorias();
   if(page==='reportes') renderReportes(); // <-- NUEVA ORDEN
 }
+function showUpload(){ document.getElementById('modal-upload').classList.add('show'); }
+function hideUpload(){ document.getElementById('modal-upload').classList.remove('show'); }
 // ─── CONEXIÓN BD ─────────────────────────────────────────────────────────────
 async function init(){
   try{
