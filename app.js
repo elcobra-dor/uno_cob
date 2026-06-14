@@ -61,23 +61,31 @@ function diasHasta(fecha){
   if(!fecha) return null;
   const hoy = new Date(); hoy.setHours(0,0,0,0);
   
-  let str = String(fecha).trim();
+  // Limpiamos el texto para quedarnos solo con la fecha, ignorando horas si las hay
+  let str = String(fecha).trim().split(' ')[0].split('T')[0];
   
-  // Si la fecha viene en formato Día/Mes/Año (ej: 15/06/2026 o 15-06-2026), la reordena
-  const m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if(m) {
-    str = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  let f;
+  
+  // Caso 1: Formato Latino (DD/MM/AAAA o DD-MM-AAAA)
+  const mLatino = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if(mLatino) {
+    f = new Date(parseInt(mLatino[3]), parseInt(mLatino[2]) - 1, parseInt(mLatino[1]));
+  } else {
+    // Caso 2: Formato Base de Datos (AAAA-MM-DD o AAAA/MM/DD)
+    const mISO = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    if(mISO) {
+      f = new Date(parseInt(mISO[1]), parseInt(mISO[2]) - 1, parseInt(mISO[3]));
+    } else {
+      f = new Date(str);
+    }
   }
   
-  // Creamos la fecha exacta a la medianoche para evitar saltos por zona horaria
-  const f = new Date(str.includes('T') ? str : str + 'T00:00:00');
+  // Si no se pudo parsear correctamente, evitamos romper el flujo
+  if(!f || isNaN(f.getTime())) return null;
+  f.setHours(0,0,0,0);
   
-  // Si el Excel trajo un texto que no es fecha, lo ignoramos para evitar errores
-  if(isNaN(f.getTime())) return null;
-  
-  return Math.round((f - hoy) / 86400000); // 86400000 milisegundos equivalen a 1 día exacto
+  return Math.round((f - hoy) / 86400000); // Retorna los días de diferencia exactos
 }
-
 // ─── NAVEGACIÓN ──────────────────────────────────────────────────────────────
 function showPage(page, el){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
