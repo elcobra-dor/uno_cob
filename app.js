@@ -86,15 +86,22 @@ function showPage(page, el){
   if(pg) pg.classList.add('active');
   if(el) el.classList.add('active');
   else if(event&&event.currentTarget) event.currentTarget.classList.add('active');
-  const titles = {conciliacion:'Conciliación bancaria',facturas:'Facturas pendientes',egresos:'Egresos',categorias:'Administrar Categorías'};
+  
+  // Agregamos 'reportes' a la lista de títulos
+  const titles = {
+    conciliacion:'Conciliación bancaria',
+    facturas:'Facturas pendientes',
+    egresos:'Egresos',
+    categorias:'Administrar Categorías',
+    reportes:'Reportes Estadísticos y Alertas'
+  };
+  
   document.getElementById('topbar-title').textContent = titles[page]||page;
   if(page==='facturas') renderFacturas();
   if(page==='egresos') renderEgresos();
   if(page==='categorias') renderCategorias();
+  if(page==='reportes') renderReportes(); // <-- NUEVA ORDEN
 }
-function showUpload(){ document.getElementById('modal-upload').classList.add('show'); }
-function hideUpload(){ document.getElementById('modal-upload').classList.remove('show'); }
-
 // ─── CONEXIÓN BD ─────────────────────────────────────────────────────────────
 async function init(){
   try{
@@ -1013,4 +1020,111 @@ function exportarEstadoCuentaPDF() {
   const win = window.open('', '_blank');
   win.document.write(html);
   win.document.close();
+}
+// ─── GENERADOR DE REPORTES ESTADÍSTICOS ──────────────────────────────────────
+function renderReportes() {
+  // 1. LÓGICA: ALERTA PREVENTIVA (3+ FACTURAS VENCIDAS)
+  const deudasPorCliente = {};
+  
+  // Agrupamos solo las facturas que tengan saldo pendiente y estén estrictamente vencidas
+  FACTURAS.forEach(f => {
+    const dias = diasHasta(f.fecha_ven);
+    if (f.saldo > 0 && dias !== null && dias < 0) {
+      if (!deudasPorCliente[f.razon_social]) {
+        deudasPorCliente[f.razon_social] = { cantidad: 0, totalSaldo: 0 };
+      }
+      deudasPorCliente[f.razon_social].cantidad++;
+      deudasPorCliente[f.razon_social].totalSaldo += parseFloat(f.saldo || 0);
+    }
+  });
+
+  // Filtramos las empresas que cumplen el criterio de riesgo (3 o más documentos vencidos)
+  const asociadosEnRiesgo = Object.keys(deudasPorCliente)
+    .map(key => ({ razon_social: key, ...deudasPorCliente[key] }))
+    .filter(a => a.cantidad >= 3)
+    .sort((a, b) => b.cantidad - a.cantidad);
+
+  // Dibujamos la tabla de alertas preventivas
+  const htmlAlertas = asociadosEnRiesgo.length === 0 
+    ? '<div class="empty" style="padding:20px 0;"><span class="empty-icon">💚</span>No hay asociados en riesgo de suspensión</div>'
+    : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr style="border-bottom:2px solid var(--red); text-align:left; color:var(--text2);">
+            <th style="padding:8px 4px;">Asociado / Razón Social</th>
+            <th style="padding:8px 4px; text-align:center;">Docs. Vencidos</th>
+            <th style="padding:8px 4px; text-align:right;">Total Pendiente</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${asociadosEnRiesgo.map(a => `
+            <tr style="border-bottom:1px solid var(--border2);">
+              <td style="padding:8px 4px; font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escaparHTML(a.razon_social)}</td>
+              <td style="padding:8px 4px; text-align:center;"><span style="background:#ffe6e6; color:#e3000f; padding:2px 8px; border-radius:10px; font-weight:bold;">${a.cantidad} cuotas</span></td>
+              <td style="padding:8px 4px; text-align:right; font-weight:600; color:#e3000f;">${fmtMonto(a.totalSaldo)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`;
+  document.getElementById('reporte-alertas').innerHTML = htmlAlertas;
+
+
+  // 2. LÓGICA: REPORTE DE INGRESOS POR RUBRO (SEGÚN GLOSA BANCARIA)
+  const rubros = {
+    'Cuotas Institucionales / Membresías': 0,
+    'Certificaciones y Constancias': 0,
+    'Capacitaciones, Cursos y Eventos': 0,
+    'Otros Ingresos por Identificar': 0
+  };
+
+  let totalRecaudadoGlobal = 0;
+
+  // Clasificamos los abonos que ya se encuentran en estado 'confirmado'
+  PAGOS.forEach(p => {
+    if (p.estado === 'confirmado' && p.monto > 0) {
+      const glosa = (p.descripcion || '').toUpperCase();
+      totalRecaudadoGlobal += parseFloat(p.monto);
+
+      if (glosa.includes('CUOTA') || glosa.includes('MEMBRE') || glosa.includes('APORTE') || glosa.includes('ASOC')) {
+        rubros['Cuotas Institucionales / Membresías'] += parseFloat(p.monto);
+      } else if (glosa.includes('CERTIF') || glosa.includes('CONSTANC') || glosa.includes('DERECHO') || glosa.includes('TASA')) {
+        rubros['Certificaciones y Constancias'] += parseFloat(p.monto);
+      } else if (glosa.includes('CURSO') || glosa.includes('CAPACIT') || glosa.includes('SEMINARIO') || glosa.includes('FORO') || glosa.includes('CONGRE')) {
+        rubros['Capacitaciones, Cursos y Eventos'] += parseFloat(p.monto);
+      } else {
+        rubros['Otros Ingresos por Identificar'] += parseFloat(p.monto);
+      }
+    }
+  });
+
+  // Dibujamos la tabla de ingresos por rubros con su porcentaje de impacto
+  const htmlRubros = totalRecaudadoGlobal === 0
+    ? '<div class="empty" style="padding:20px 0;"><span class="empty-icon">🪙</span>No hay ingresos conciliados en este período</div>'
+    : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr style="border-bottom:2px solid var(--green); text-align:left; color:var(--text2);">
+            <th style="padding:8px 4px;">Línea de Ingreso / Rubro</th>
+            <th style="padding:8px 4px; text-align:center;">Participación</th>
+            <th style="padding:8px 4px; text-align:right;">Monto Recaudado</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${Object.keys(rubros).map(key => {
+            const montoRubro = rubros[key];
+            const porcentaje = totalRecaudadoGlobal > 0 ? Math.round((montoRubro / totalRecaudadoGlobal) * 100) : 0;
+            return `
+              <tr style="border-bottom:1px solid var(--border2);">
+                <td style="padding:8px 4px; font-weight:500;">${key}</td>
+                <td style="padding:8px 4px; text-align:center; color:var(--text3);">${porcentaje}%</td>
+                <td style="padding:8px 4px; text-align:right; font-weight:600; color:#10b981;">${fmtMonto(montoRubro)}</td>
+              </tr>
+            `;
+          }).join('')}
+          <tr style="background:var(--bg3); font-weight:bold; border-top:2px solid var(--border);">
+            <td style="padding:10px 4px;">TOTAL RECAUDADO MONITOREADO</td>
+            <td style="padding:10px 4px; text-align:center;">100%</td>
+            <td style="padding:10px 4px; text-align:right; color:var(--text);">${fmtMonto(totalRecaudadoGlobal)}</td>
+          </tr>
+        </tbody>
+      </table>`;
+  document.getElementById('reporte-rubros').innerHTML = htmlRubros;
 }
