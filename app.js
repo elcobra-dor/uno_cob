@@ -198,97 +198,276 @@ async function cargarFacturas(input){
 async function cargarBancos(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
-  
-  // Leemos el Excel como una matriz pura para poder escanear las filas de arriba
   const rawData = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
 
-  if (!rawData.length) { alert('El archivo del banco está vacío.'); return; }
+  if (!rawData.length) { alert('El archivo está vacío.'); return; }
 
-  // 1. ESCÁNER DE MONEDA: Revisamos las primeras 10 filas buscando "Dólares"
+  // 1. ESCÁNER TIPO DE BANCO Y MONEDA
   let esDolares = false;
-  for(let i = 0; i < Math.min(rawData.length, 10); i++){
+  let esNacion = false;
+  let esInterbank = false;
+  let esScotiabank = false;
+  let esBbva = false;
+  let headerIdx = -1;
+  let monedaBanco = 'PEN';
+
+  for(let i = 0; i < Math.min(rawData.length, 25); i++){
     const filaTexto = rawData[i].join(' ').toUpperCase();
-    if(filaTexto.includes('DÓLARES') || filaTexto.includes('DOLARES') || filaTexto.includes('USD')) {
+    
+    // Detector global de dólares
+    if(filaTexto.includes('DÓLARES') || filaTexto.includes('DOLARES') || filaTexto.includes('USD') || filaTexto.includes('US$') || filaTexto.includes('CCME') || filaTexto.includes('IMPORTES EN: USD')) {
       esDolares = true;
+      monedaBanco = 'USD';
+    }
+
+    // Radar Banco de la Nación
+    if(filaTexto.includes('CARGO') && filaTexto.includes('ABONO') && filaTexto.includes('RUC') && filaTexto.includes('OFICINA') && !filaTexto.includes('F. OPERACIÓN')) {
+      esNacion = true;
+      headerIdx = i;
       break;
     }
-  }
-  const monedaAbono = esDolares ? 'USD' : 'PEN';
-
-  // 2. DETECTOR DE TABLA: Buscamos en qué fila empiezan realmente las cabeceras
-  let headerIdx = -1;
-  for(let i = 0; i < Math.min(rawData.length, 15); i++){
-    const filaTexto = rawData[i].join(' ').toUpperCase();
-    if((filaTexto.includes('MONTO') || filaTexto.includes('IMPORTE')) && filaTexto.includes('OPERACI')) {
+    // Radar Interbank
+    if(filaTexto.includes('FECHA DE OPERACIÓN') && filaTexto.includes('NRO. DE OPERACIÓN') && filaTexto.includes('CARGO') && filaTexto.includes('ABONO')) {
+      esInterbank = true;
+      headerIdx = i;
+      break;
+    }
+    // Radar Scotiabank
+    if(filaTexto.includes('FECHA') && filaTexto.includes('MOVIMIENTO') && filaTexto.includes('IMPORTE') && filaTexto.includes('REFERENCIA') && filaTexto.includes('CDR')) {
+      esScotiabank = true;
+      headerIdx = i;
+      break;
+    }
+    // Radar BBVA
+    if(filaTexto.includes('F. OPERACIÓN') && filaTexto.includes('CONCEPTO') && filaTexto.includes('IMPORTE') && filaTexto.includes('OFICINA')) {
+      esBbva = true;
+      headerIdx = i;
+      break;
+    }
+    // Radar BCP (Se ejecuta si no es ninguno de los anteriores)
+    if((filaTexto.includes('MONTO') || filaTexto.includes('IMPORTE')) && filaTexto.includes('OPERACI') && !esBbva && !esInterbank) {
       headerIdx = i;
       break;
     }
   }
 
-  if(headerIdx === -1) { 
-    alert('No se detectaron las cabeceras de la tabla del banco (Monto, Operación).'); 
-    return; 
-  }
-
-  // 3. MAPEO DE COLUMNAS
-  const headers = rawData[headerIdx].map(h => String(h).trim().toLowerCase());
-  const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta') || h.includes('fecha'));
-  const colDesc = headers.findIndex(h => h.includes('descripci') || h.includes('glosa') || h.includes('concepto'));
-  const colMonto = headers.findIndex(h => /^monto$/.test(h) || h.includes('importe') || h.includes('amount'));
-  const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('número')));
-  const colRef2 = headers.findIndex(h => h.includes('referencia2') || h.includes('referencia'));
-
-  const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
-
-  if(colMonto === -1 || opIndex === -1) { 
-    alert('Faltan columnas vitales (Monto u Operación) en la fila de cabeceras.'); 
-    return; 
+  if(headerIdx === -1) {
+    alert('No se detectaron las cabeceras del banco. Asegúrate de subir el archivo original de tu entidad.');
+    return;
   }
 
   const nuevos = [];
   const egresosRaw = [];
 
-  // 4. PROCESAMIENTO LIMPIO DE DATOS
-  for(let i = headerIdx + 1; i < rawData.length; i++) {
-    const r = rawData[i];
-    if(!r || r.length === 0) continue;
+  function limpiarMonto(texto) {
+    let limpio = String(texto || '').replace(/[S\/\$\s,]/g, '').trim();
+    return parseFloat(limpio) || 0;
+  }
 
-    // Limpiamos las comas de los miles (ej: 200,072.45 -> 200072.45)
-    const montoStr = String(r[colMonto] || '').replace(/,/g, '');
-    const montoVal = parseFloat(montoStr) || 0;
-    const opVal = String(r[opIndex] || '').trim();
+  // 2. PROCESAMIENTO SEGÚN EL BANCO
+  if(esBbva) {
+    // --- LÓGICA BBVA ---
+    const headers = rawData[headerIdx].map(h => String(h).trim().toUpperCase());
+    const colFecha = headers.findIndex(h => h.includes('F. OPERACI'));
+    const colDoc = headers.findIndex(h => h.includes('Nº. DOC') || h.includes('N. DOC') || h.includes('NRO. DOC') || h.includes('DOC.'));
+    const colConcepto = headers.findIndex(h => h.includes('CONCEPTO'));
+    const colImporte = headers.findIndex(h => h === 'IMPORTE');
 
-    // Ignoramos filas vacías o subtotales sin número de operación
-    if(!opVal || montoVal === 0) continue;
+    for(let i = headerIdx + 1; i < rawData.length; i++) {
+      const r = rawData[i];
+      if(!r || r.length === 0) continue;
 
-    const obj = {
-      operacion: opVal,
-      fecha: fmtFecha(r[colFecha] || ''),
-      descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
-      referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '',
-      moneda: monedaAbono
-    };
+      let fechaVal = String(r[colFecha] || '').trim();
+      
+      // Filtro para ignorar las filas trampa de saldos y filas vacías
+      if(!fechaVal || fechaVal.toUpperCase().includes('SALDO')) continue;
 
-    if(montoVal > 0) {
-      obj.monto = montoVal;
-      nuevos.push(obj);
-    } else {
-      obj.monto = Math.abs(montoVal);
-      obj.estado = 'pendiente';
-      egresosRaw.push(obj);
+      const montoVal = limpiarMonto(r[colImporte]);
+      if(montoVal === 0) continue;
+
+      let opVal = String(r[colDoc] || '').trim();
+      if(!opVal || opVal === '-') opVal = 'BBVA-' + fechaVal.replace(/\//g, '') + '-' + i;
+
+      const obj = {
+        operacion: opVal,
+        fecha: fmtFecha(fechaVal),
+        descripcion: String(r[colConcepto] || '').trim(),
+        moneda: monedaBanco
+      };
+
+      if(montoVal > 0) {
+        obj.monto = montoVal;
+        nuevos.push(obj);
+      } else {
+        obj.monto = Math.abs(montoVal);
+        obj.estado = 'pendiente';
+        egresosRaw.push(obj);
+      }
+    }
+  } else if(esScotiabank) {
+    // --- LÓGICA SCOTIABANK ---
+    const headers = rawData[headerIdx].map(h => String(h).trim().toUpperCase());
+    const colFecha = headers.findIndex(h => h === 'FECHA');
+    const colMov = headers.findIndex(h => h === 'MOVIMIENTO');
+    const colImporte = headers.findIndex(h => h === 'IMPORTE');
+    const colRef = headers.findIndex(h => h === 'REFERENCIA');
+
+    for(let i = headerIdx + 1; i < rawData.length; i++) {
+      const r = rawData[i];
+      if(!r || r.length === 0) continue;
+
+      const montoVal = limpiarMonto(r[colImporte]);
+      let opVal = String(r[colRef] || '').trim();
+      const fechaVal = String(r[colFecha] || '').trim();
+
+      if(!fechaVal || montoVal === 0) continue;
+      if(!opVal) opVal = 'SCO-' + fechaVal.replace(/\//g, '') + '-' + i;
+
+      const obj = {
+        operacion: opVal,
+        fecha: fmtFecha(fechaVal),
+        descripcion: String(r[colMov] || '').trim(),
+        moneda: monedaBanco
+      };
+
+      if(montoVal > 0) {
+        obj.monto = montoVal;
+        nuevos.push(obj);
+      } else {
+        obj.monto = Math.abs(montoVal);
+        obj.estado = 'pendiente';
+        egresosRaw.push(obj);
+      }
+    }
+  } else if(esInterbank) {
+    // --- LÓGICA INTERBANK ---
+    const headers = rawData[headerIdx].map(h => String(h).trim().toUpperCase());
+    const colFecha = headers.findIndex(h => h.includes('FECHA DE OPERACI'));
+    const colOp = headers.findIndex(h => h.includes('NRO. DE OPERACI'));
+    const colMov = headers.findIndex(h => h === 'MOVIMIENTO');
+    const colDesc = headers.findIndex(h => h === 'DESCRIPCIÓN' || h === 'DESCRIPCION');
+    const colCargo = headers.findIndex(h => h === 'CARGO');
+    const colAbono = headers.findIndex(h => h === 'ABONO');
+
+    for(let i = headerIdx + 1; i < rawData.length; i++) {
+      const r = rawData[i];
+      if(!r || r.length === 0) continue;
+
+      let montoAbono = limpiarMonto(r[colAbono]);
+      let montoCargo = Math.abs(limpiarMonto(r[colCargo]));
+      let opVal = String(r[colOp] || '').trim();
+      let fechaVal = String(r[colFecha] || '').trim();
+
+      if(!fechaVal || (montoAbono === 0 && montoCargo === 0)) continue;
+      if (opVal === '-' || opVal === '') opVal = 'INT-' + fechaVal.replace(/\//g, '') + '-' + i;
+
+      const glosaCompleta = [String(r[colMov] || '').trim(), String(r[colDesc] || '').trim()].filter(Boolean).join(' - ');
+
+      const obj = {
+        operacion: opVal,
+        fecha: fmtFecha(fechaVal),
+        descripcion: glosaCompleta,
+        moneda: monedaBanco
+      };
+
+      if(montoAbono > 0) {
+        obj.monto = montoAbono;
+        nuevos.push(obj);
+      } else if (montoCargo > 0) {
+        obj.monto = montoCargo;
+        obj.estado = 'pendiente';
+        egresosRaw.push(obj);
+      }
+    }
+  } else if(esNacion) {
+    // --- LÓGICA BANCO DE LA NACIÓN ---
+    const headers = rawData[headerIdx].map(h => String(h).trim().toUpperCase());
+    const colFecha = headers.findIndex(h => h === 'FECHA');
+    const colDoc = headers.findIndex(h => h === 'DOCUMENTO');
+    const colRuc = headers.findIndex(h => h === 'RUC');
+    const colTrans = headers.findIndex(h => h === 'TRANS.');
+    const colCargo = headers.findIndex(h => h === 'CARGO');
+    const colAbono = headers.findIndex(h => h === 'ABONO');
+
+    for(let i = headerIdx + 1; i < rawData.length; i++) {
+      const r = rawData[i];
+      if(!r || r.length === 0) continue;
+
+      let montoAbono = limpiarMonto(r[colAbono]);
+      let montoCargo = limpiarMonto(r[colCargo]);
+      let opVal = String(r[colDoc] || '').trim();
+
+      if(!opVal || (montoAbono === 0 && montoCargo === 0)) continue;
+
+      let fRaw = String(r[colFecha] || '').replace(/\./g, '-');
+      const rucVal = String(r[colRuc] || '').trim();
+
+      const obj = {
+        operacion: opVal,
+        fecha: fmtFecha(fRaw),
+        descripcion: `DETRACCION BN - ${String(r[colTrans] || '').trim()} - RUC: ${rucVal}`,
+        referencia2: rucVal, 
+        moneda: 'PEN' 
+      };
+
+      if(montoAbono > 0) {
+        obj.monto = montoAbono;
+        nuevos.push(obj);
+      } else if (montoCargo > 0) {
+        obj.monto = montoCargo;
+        obj.estado = 'pendiente';
+        egresosRaw.push(obj);
+      }
+    }
+  } else {
+    // --- LÓGICA BCP ---
+    const headers = rawData[headerIdx].map(h => String(h).trim().toLowerCase());
+    const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta'));
+    const colDesc = headers.findIndex(h => h.includes('descripci') || h.includes('glosa'));
+    const colMonto = headers.findIndex(h => /^monto$/.test(h) || h.includes('importe'));
+    const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('número')));
+    const colRef2 = headers.findIndex(h => h.includes('referencia2'));
+
+    const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
+
+    for(let i = headerIdx + 1; i < rawData.length; i++) {
+      const r = rawData[i];
+      if(!r || r.length === 0) continue;
+
+      const montoVal = limpiarMonto(r[colMonto]);
+      const opVal = String(r[opIndex] || '').trim();
+
+      if(!opVal || montoVal === 0) continue;
+
+      const obj = {
+        operacion: opVal,
+        fecha: fmtFecha(r[colFecha] || ''),
+        descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
+        referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '',
+        moneda: monedaBanco
+      };
+
+      if(montoVal > 0) {
+        obj.monto = montoVal;
+        nuevos.push(obj);
+      } else {
+        obj.monto = Math.abs(montoVal);
+        obj.estado = 'pendiente';
+        egresosRaw.push(obj);
+      }
     }
   }
 
-  // 5. GUARDADO EN BASE DE DATOS
+  // 3. GUARDADO
   const {error} = await db.from('abonos').upsert(nuevos,{onConflict:'operacion',ignoreDuplicates:true});
-  if(error){ toast('Error guardando abonos: ' + error.message, ''); return; }
+  if(error){ toast('Error: ' + error.message, ''); return; }
 
   if(egresosRaw.length){
     const {error:ee} = await db.from('egresos').upsert(egresosRaw,{onConflict:'operacion',ignoreDuplicates:true});
     if(ee) toast('Advertencia egresos: ' + ee.message, '');
-    else toast(nuevos.length + ' ingresos y ' + egresosRaw.length + ' egresos (' + monedaAbono + ')', 'green');
+    else toast('Procesado con éxito (' + (esBbva?'BBVA ':esScotiabank?'SCOTIABANK ':esInterbank?'INTERBANK ':esNacion?'BN ':'BCP ') + monedaBanco + ')', 'green');
   } else {
-    toast(nuevos.length + ' abonos cargados en ' + monedaAbono, 'green');
+    toast('Operaciones cargadas correctamente (' + (esBbva?'BBVA ':esScotiabank?'SCOTIABANK ':esInterbank?'INTERBANK ':esNacion?'BN ':'BCP ') + monedaBanco + ')', 'green');
   }
 
   document.getElementById('slot-bancos').classList.add('loaded');
