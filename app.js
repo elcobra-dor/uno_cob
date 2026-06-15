@@ -196,58 +196,104 @@ async function cargarFacturas(input){
 }
 
 async function cargarBancos(input){
-  const wb=await leerExcel(input.files[0]);
-  const ws=wb.Sheets[wb.SheetNames[0]];
-  const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
-  const keys=rows.length?Object.keys(rows[0]):[];
-  const colFecha=keys.find(k=>/^fecha$/i.test(k))||keys.find(k=>/fecha/i.test(k));
-  const colDesc=keys.find(k=>/descripci|glosa|concepto/i.test(k));
-  const colMonto=keys.find(k=>/^monto$/i.test(k))||keys.find(k=>/importe|amount/i.test(k));
-  const colOp=keys.find(k=>/operaci.*n.*n.m/i.test(k))||keys.find(k=>/n.m.*operaci/i.test(k));
-  const colRef2=keys.find(k=>/referencia2|ref.*2/i.test(k))||keys.find(k=>/referencia/i.test(k));
-  const colFacturaBancos=keys.find(k=>/factura/i.test(k)); // Identifica la columna Factura en el Excel del banco
+  const wb = await leerExcel(input.files[0]);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  
+  // Leemos el Excel como una matriz pura para poder escanear las filas de arriba
+  const rawData = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
 
-  if(!colMonto||!colOp){ alert('No se detectaron columnas de Monto u Operación.'); return; }
+  if (!rawData.length) { alert('El archivo del banco está vacío.'); return; }
 
-  const nuevos=rows.filter(r=>{
-    const esAbono = parseFloat(r[colMonto]) > 0;
-    // Pasa la prueba solo si no hay texto en la columna Factura (o si la columna no existe)
-    const facturaVacia = !colFacturaBancos || String(r[colFacturaBancos]).trim() === '';
-    return esAbono && facturaVacia;
-  }).map(r=>({
-    operacion:String(r[colOp]).trim(),
-    fecha:fmtFecha(r[colFecha]||''),
-    descripcion:colDesc?String(r[colDesc]).trim():'',
-    monto:parseFloat(r[colMonto])||0,
-    referencia2:colRef2?String(r[colRef2]).trim():''
-  })).filter(r=>r.operacion);
+  // 1. ESCÁNER DE MONEDA: Revisamos las primeras 10 filas buscando "Dólares"
+  let esDolares = false;
+  for(let i = 0; i < Math.min(rawData.length, 10); i++){
+    const filaTexto = rawData[i].join(' ').toUpperCase();
+    if(filaTexto.includes('DÓLARES') || filaTexto.includes('DOLARES') || filaTexto.includes('USD')) {
+      esDolares = true;
+      break;
+    }
+  }
+  const monedaAbono = esDolares ? 'USD' : 'PEN';
 
-  const {error}=await db.from('abonos').upsert(nuevos,{onConflict:'operacion',ignoreDuplicates:true});
-  if(error){ toast('Error guardando abonos: '+error.message,''); return; }
+  // 2. DETECTOR DE TABLA: Buscamos en qué fila empiezan realmente las cabeceras
+  let headerIdx = -1;
+  for(let i = 0; i < Math.min(rawData.length, 15); i++){
+    const filaTexto = rawData[i].join(' ').toUpperCase();
+    if((filaTexto.includes('MONTO') || filaTexto.includes('IMPORTE')) && filaTexto.includes('OPERACI')) {
+      headerIdx = i;
+      break;
+    }
+  }
 
-  const egresosRaw = rows.filter(r=>parseFloat(r[colMonto])<0).map(r=>({
-    operacion: String(r[colOp]).trim(),
-    fecha: fmtFecha(r[colFecha]||''),
-    descripcion: colDesc?String(r[colDesc]).trim():'',
-    monto: Math.abs(parseFloat(r[colMonto])||0),
-    referencia2: colRef2?String(r[colRef2]).trim():'',
-    banco: r['BANCO']?String(r['BANCO']).trim():'',
-    cuenta: r['Cuenta']?String(r['Cuenta']).trim():'',
-    estado: 'pendiente'
-  })).filter(r=>r.operacion && r.monto>0);
+  if(headerIdx === -1) { 
+    alert('No se detectaron las cabeceras de la tabla del banco (Monto, Operación).'); 
+    return; 
+  }
+
+  // 3. MAPEO DE COLUMNAS
+  const headers = rawData[headerIdx].map(h => String(h).trim().toLowerCase());
+  const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta') || h.includes('fecha'));
+  const colDesc = headers.findIndex(h => h.includes('descripci') || h.includes('glosa') || h.includes('concepto'));
+  const colMonto = headers.findIndex(h => /^monto$/.test(h) || h.includes('importe') || h.includes('amount'));
+  const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('número')));
+  const colRef2 = headers.findIndex(h => h.includes('referencia2') || h.includes('referencia'));
+
+  const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
+
+  if(colMonto === -1 || opIndex === -1) { 
+    alert('Faltan columnas vitales (Monto u Operación) en la fila de cabeceras.'); 
+    return; 
+  }
+
+  const nuevos = [];
+  const egresosRaw = [];
+
+  // 4. PROCESAMIENTO LIMPIO DE DATOS
+  for(let i = headerIdx + 1; i < rawData.length; i++) {
+    const r = rawData[i];
+    if(!r || r.length === 0) continue;
+
+    // Limpiamos las comas de los miles (ej: 200,072.45 -> 200072.45)
+    const montoStr = String(r[colMonto] || '').replace(/,/g, '');
+    const montoVal = parseFloat(montoStr) || 0;
+    const opVal = String(r[opIndex] || '').trim();
+
+    // Ignoramos filas vacías o subtotales sin número de operación
+    if(!opVal || montoVal === 0) continue;
+
+    const obj = {
+      operacion: opVal,
+      fecha: fmtFecha(r[colFecha] || ''),
+      descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
+      referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '',
+      moneda: monedaAbono
+    };
+
+    if(montoVal > 0) {
+      obj.monto = montoVal;
+      nuevos.push(obj);
+    } else {
+      obj.monto = Math.abs(montoVal);
+      obj.estado = 'pendiente';
+      egresosRaw.push(obj);
+    }
+  }
+
+  // 5. GUARDADO EN BASE DE DATOS
+  const {error} = await db.from('abonos').upsert(nuevos,{onConflict:'operacion',ignoreDuplicates:true});
+  if(error){ toast('Error guardando abonos: ' + error.message, ''); return; }
 
   if(egresosRaw.length){
-    const {error:ee}=await db.from('egresos').upsert(egresosRaw,{onConflict:'operacion',ignoreDuplicates:true});
-    if(ee) toast('Advertencia egresos: '+ee.message,'');
-    else toast(nuevos.length+' ingresos y '+egresosRaw.length+' egresos cargados','green');
+    const {error:ee} = await db.from('egresos').upsert(egresosRaw,{onConflict:'operacion',ignoreDuplicates:true});
+    if(ee) toast('Advertencia egresos: ' + ee.message, '');
+    else toast(nuevos.length + ' ingresos y ' + egresosRaw.length + ' egresos (' + monedaAbono + ')', 'green');
   } else {
-    toast(nuevos.length+' abonos cargados','green');
+    toast(nuevos.length + ' abonos cargados en ' + monedaAbono, 'green');
   }
 
   document.getElementById('slot-bancos').classList.add('loaded');
-  document.getElementById('status-bancos').textContent=nuevos.length+' ingresos · '+egresosRaw.length+' egresos';
+  document.getElementById('status-bancos').textContent = nuevos.length + ' ing. · ' + egresosRaw.length + ' egr.';
 }
-
 async function cargarInter(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
