@@ -166,35 +166,100 @@ async function cargarDesdeBD(){
 
 // ─── CARGA DE ARCHIVOS ───────────────────────────────────────────────────────
 async function cargarFacturas(input){
-  const wb=await leerExcel(input.files[0]);
-  const ws=wb.Sheets[wb.SheetNames[0]];
-  const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
-  const keys=rows.length?Object.keys(rows[0]):[];
-  const colFact=keys.find(k=>/factura/i.test(k));
-  const colRS=keys.find(k=>/razon|empresa|social/i.test(k));
-  const colFD=keys.find(k=>/fecha.*doc/i.test(k))||keys.find(k=>/fecha/i.test(k));
-  const colFV=keys.find(k=>/fecha.*ven|venc/i.test(k));
-  const colSaldo=keys.find(k=>/saldo/i.test(k))||keys.find(k=>/importe|total|monto/i.test(k));
-  const colMes=keys.find(k=>/^mes$/i.test(k));
-  if(!colFact||!colSaldo){ alert('No se detectaron columnas de Factura o Saldo.'); return; }
-
-  const nuevas=rows.filter(r=>parseFloat(r[colSaldo])>0).map(r=>({
-    factura:String(r[colFact]).trim(),
-    razon_social:colRS?String(r[colRS]).trim():'',
-    fecha_doc:fmtFecha(r[colFD]||''),
-    fecha_ven:fmtFecha(r[colFV]||''),
-    saldo:parseFloat(r[colSaldo])||0,
-    mes:colMes?parseInt(r[colMes])||0:0
-  })).filter(r=>r.factura);
-
-  const {error}=await db.from('facturas').upsert(nuevas,{onConflict:'factura',ignoreDuplicates:true});
-  if(error){ toast('Error guardando facturas: '+error.message,''); return; }
-
-  document.getElementById('slot-facturas').classList.add('loaded');
-  document.getElementById('status-facturas').textContent=nuevas.length+' facturas';
-  toast(nuevas.length+' facturas cargadas','green');
+  if (!input.files || input.files.length === 0) return;
+  
+  const wb = await leerExcel(input.files[0]);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+  
+  if (!rows.length) {
+    alert('El archivo seleccionado está vacío.');
+    return;
+  }
+  
+  // 1. RADAR AUTOMÁTICO DE ARCHIVO
+  const headers = Object.keys(rows[0]);
+  const esContable = headers.includes('SALDO_S') && headers.includes('SERIE') && headers.includes('NUMERO');
+  const esComercial = headers.includes('SERIE_DOC') && headers.includes('NUMERO_DOC');
+  
+  function limpiarDocNum(serie, numero) {
+    const s = String(serie || '').trim().replace(/^0+/, '');
+    const n = String(numero || '').trim().replace(/^0+/, '');
+    return s && n ? `${s}-${n}` : null;
+  }
+  
+  let nuevas = [];
+  
+  if (esContable) {
+    // --- LÓGICA ARCHIVO CONTABLE (Tabla Dinámica / Saldos Netos) ---
+    const resumenContable = {};
+    
+    rows.forEach(r => {
+      const codFactura = limpiarDocNum(r['SERIE'], r['NUMERO']);
+      if (!codFactura) return;
+      
+      const monedaDoc = String(r['M_REG'] || 'S').trim().toUpperCase();
+      const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
+      const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
+      
+      if (!resumenContable[codFactura] || saldoFila < resumenContable[codFactura].saldo) {
+        resumenContable[codFactura] = {
+          factura: codFactura,
+          razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
+          fecha_doc: fmtFecha(r['FECHA_DOC']),
+          fecha_ven: fmtFecha(r['FECHA_VEN']),
+          saldo: saldoFila,
+          mes: parseInt(r['MES']) || 0,
+          moneda: esDolares ? 'USD' : 'PEN'
+        };
+      }
+    });
+    
+    nuevas = Object.values(resumenContable).filter(f => f.saldo > 0);
+    
+    const { error } = await db.from('facturas').upsert(nuevas, { onConflict: 'factura' });
+    if (error) { toast('Error BD: ' + error.message, ''); return; }
+    
+    toast(nuevas.length + ' facturas procesadas (Archivo Contable)', 'green');
+    
+  } else if (esComercial) {
+    // --- LÓGICA ARCHIVO COMERCIAL (Suma de ítems) ---
+    const resumenComercial = {};
+    
+    rows.forEach(r => {
+      const codFactura = limpiarDocNum(r['SERIE_DOC'], r['NUMERO_DOC']);
+      if (!codFactura) return;
+      
+      const totalFila = parseFloat(r['TOTAL'] || 0);
+      
+      if (!resumenComercial[codFactura]) {
+        resumenComercial[codFactura] = {
+          factura: codFactura,
+          razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
+          fecha_doc: fmtFecha(r['FECHA_DOC']),
+          saldo: 0, 
+          mes: parseInt(r['MES']) || 0
+        };
+      }
+      // Sumamos si una factura tiene varias líneas (ej. varios productos)
+      resumenComercial[codFactura].saldo += totalFila;
+    });
+    
+    nuevas = Object.values(resumenComercial).filter(f => f.saldo > 0);
+    
+    const { error } = await db.from('facturas').upsert(nuevas, { onConflict: 'factura' });
+    if (error) { toast('Error BD: ' + error.message, ''); return; }
+    
+    toast(nuevas.length + ' facturas procesadas (Archivo Comercial)', 'green');
+    
+  } else {
+    alert('Archivo no reconocido. Asegúrate de subir el reporte contable o comercial original.');
+    return;
+  }
+  
+  // Actualizamos la vista
+  await cargarDesdeBD();
 }
-
 async function cargarBancos(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
