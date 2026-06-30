@@ -6,7 +6,6 @@
   <title>Sistema de Cobranzas</title>
   
   <style>
-    /* Reseteo básico para limpiar márgenes */
     body, html {
       margin: 0;
       padding: 0;
@@ -14,10 +13,10 @@
       background-color: #f4f7f6;
       display: flex;
       height: 100vh;
-      overflow: hidden; /* Evita que toda la página se mueva raro */
+      overflow: hidden; 
     }
 
-    /* 1. EL PANEL LATERAL FIJO (PARED IZQUIERDA) */
+    /* EL PANEL LATERAL FIJO */
     .panel-lateral {
       width: 250px;
       background-color: #1a365d;
@@ -31,41 +30,59 @@
       z-index: 1000;
     }
 
-    /* 2. EL CONTENIDO PRINCIPAL (EMPUJADO A LA DERECHA) */
+    /* EL CONTENIDO PRINCIPAL */
     .contenido-principal {
-      margin-left: 250px; /* Obliga al contenido a respetar los 250px del menú */
+      margin-left: 250px; 
       width: calc(100% - 250px);
       height: 100vh;
       padding: 30px;
       box-sizing: border-box;
-      overflow-y: auto; /* Barra de scroll vertical para bajar en la página */
+      overflow-y: auto; 
     }
 
-    /* 3. EL CONTENEDOR SALVA-TABLAS (SCROLL HORIZONTAL) */
+    /* PANEL DE BOTONES */
+    .panel-carga {
+      background-color: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+
+    .grupo-carga {
+      margin-bottom: 15px;
+    }
+
+    .grupo-carga label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 5px;
+      color: #2d3748;
+    }
+
+    /* LA TABLA */
     .table-responsive {
       width: 100%;
-      overflow-x: auto; /* Barra de scroll horizontal solo para la tabla */
+      overflow-x: auto; 
       -webkit-overflow-scrolling: touch;
       background-color: white;
       border-radius: 8px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
       padding: 15px;
-      margin-top: 20px;
       box-sizing: border-box;
     }
 
-    /* 4. ESTRUCTURA DE LA TABLA */
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 1100px; /* Fuerza a la tabla a estirarse para que entren los textos largos */
+      min-width: 1100px; 
     }
 
     th, td {
       padding: 12px;
       text-align: left;
       border-bottom: 1px solid #e2e8f0;
-      white-space: nowrap; /* Evita que los textos formen torres hacia abajo */
+      white-space: nowrap; 
     }
 
     th {
@@ -79,16 +96,28 @@
 
   <div class="panel-lateral">
     <h2>Menú</h2>
-    <p>Inicio</p>
-    <p>Facturas</p>
+    <p style="cursor: pointer;">Inicio</p>
+    <p style="cursor: pointer; font-weight: bold;">Facturas</p>
   </div>
 
   <div class="contenido-principal">
     
-    <h2>Gestión de Facturación y Cobranzas</h2>
+    <h2 style="color: #1a365d; margin-top: 0;">Gestión de Facturación y Cobranzas</h2>
 
-    <div style="margin-bottom: 20px;">
-       </div>
+    <div class="panel-carga">
+      
+      <div class="grupo-carga">
+        <label>1. Cargar Facturas (Sube el Contable y luego el Comercial)</label>
+        <input type="file" id="input-facturas" accept=".xlsx, .xls, .csv" onchange="cargarFacturas(this)">
+      </div>
+
+      <div class="grupo-carga" style="margin-bottom: 0;">
+        <label>2. Cargar Bancos (Libro Mayor o archivos individuales)</label>
+        <input type="file" id="input-bancos" accept=".xlsx, .xls, .csv" onchange="cargarBancos(this)">
+        <span id="status-bancos" style="margin-left: 10px; color: #718096; font-size: 0.9em;"></span>
+      </div>
+
+    </div>
 
     <div class="table-responsive">
       <table id="tabla-facturas">
@@ -111,5 +140,9 @@
 
   </div>
 
-  </body>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="app.js"></script>
+
+</body>
 </html>
