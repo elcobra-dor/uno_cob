@@ -485,43 +485,56 @@ async function cargarBancos(input){
       }
     }
   } else {
-    // --- LÓGICA BCP ---
-    const headers = rawData[headerIdx].map(h => String(h).trim().toLowerCase());
-    const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta'));
-    const colDesc = headers.findIndex(h => h.includes('descripci') || h.includes('glosa'));
-    const colMonto = headers.findIndex(h => /^monto$/.test(h) || h.includes('importe'));
-    const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('número')));
-    const colRef2 = headers.findIndex(h => h.includes('referencia2'));
+   // --- LÓGICA BCP ---
+  const headers = rawData[headerIdx].map(h => String(h).trim().toLowerCase());
+  const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta'));
+  const colDesc = headers.findIndex(h => h.includes('descripci') || h.includes('glosa'));
+  const colMonto = headers.findIndex(h => /^monto$/.test(h) || h.includes('importe'));
+  const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('número')));
+  const colRef2 = headers.findIndex(h => h.includes('referencia2'));
 
-    const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
+  // --- BUSCAMOS LAS COLUMNAS FDC AQUÍ ---
+  const colFactura = headers.findIndex(h => h === 'factura');
+  const colEstado = headers.findIndex(h => h === 'estado');
 
-    for(let i = headerIdx + 1; i < rawData.length; i++) {
-      const r = rawData[i];
-      if(!r || r.length === 0) continue;
+  const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
 
-      const montoVal = limpiarMonto(r[colMonto]);
-      const opVal = String(r[opIndex] || '').trim();
+  for(let i = headerIdx + 1; i < rawData.length; i++) {
+    const r = rawData[i];
+    if(!r || r.length === 0) continue;
 
-      if(!opVal || montoVal === 0) continue;
+    // --- BARRERA FDC ACTIVA ---
+    const valorFactura = colFactura !== -1 ? String(r[colFactura] || '').trim().toUpperCase() : '';
+    const valorEstado = colEstado !== -1 ? String(r[colEstado] || '').trim().toUpperCase() : '';
+    
+    if (valorFactura.includes('FDC') || valorEstado.includes('FDC')) {
+        continue; // Ignoramos absolutamente esta fila
+    }
+    // --------------------------
 
-      const obj = {
-        operacion: opVal,
-        fecha: fmtFecha(r[colFecha] || ''),
-        descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
-        referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '',
-        moneda: monedaBanco
-      };
+    const montoVal = limpiarMonto(r[colMonto]);
+    const opVal = String(r[opIndex] || '').trim();
 
-      if(montoVal > 0) {
-        obj.monto = montoVal;
-        nuevos.push(obj);
-      } else {
-        obj.monto = Math.abs(montoVal);
-        obj.estado = 'pendiente';
-        egresosRaw.push(obj);
-      }
+    if(!opVal || montoVal === 0) continue;
+
+    const obj = {
+      operacion: opVal,
+      fecha: fmtFecha(r[colFecha] || ''),
+      descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
+      referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '',
+      moneda: monedaBanco
+    };
+
+    if(montoVal > 0) {
+      obj.monto = montoVal;
+      nuevos.push(obj);
+    } else {
+      obj.monto = Math.abs(montoVal);
+      obj.estado = 'pendiente';
+      egresosRaw.push(obj);
     }
   }
+}
 
   // 3. GUARDADO
   const {error} = await db.from('abonos').upsert(nuevos,{onConflict:'operacion',ignoreDuplicates:true});
@@ -545,7 +558,6 @@ async function cargarInter(input){
   
   let headerIdx = -1, colOpKey = '', colOrdKey = '';
 
-  // 1. Buscador de cabeceras restaurado
   for (let i = 0; i < Math.min(data.length, 25); i++) {
     const row = data[i].map(c => String(c).trim().toUpperCase());
     if (row.includes('NRO. OPERACION') && row.includes('ORDENANTE')) {
@@ -560,45 +572,25 @@ async function cargarInter(input){
   }
 
   if (headerIdx === -1) { 
-    alert('No se detectaron columnas de interbancario'); 
+    alert('No se detectaron columnas de Operación y Ordenante.'); 
     return; 
   }
 
   const headers = data[headerIdx].map(c => String(c).trim());
   const opIdx = headers.indexOf(colOpKey), cbOrdIdx = headers.indexOf(colOrdKey);
     
-  // --- PASO 1: IDENTIFICAR LAS COLUMNAS FDC ---
-  const cabeceras = data[headerIdx].map(h => String(h).trim().toUpperCase());
-  const colFactura = cabeceras.indexOf('FACTURA'); 
-  const colEstado = cabeceras.indexOf('ESTADO');   
-
-  // --- CICLO PRINCIPAL ---
   for (let i = headerIdx + 1; i < data.length; i++) {
       const row = data[i];
       if (!row || row.length <= Math.max(opIdx, cbOrdIdx)) continue;
-
-      // --- PASO 2: LA BARRERA FDC ---
-      const valorFactura = colFactura !== -1 ? String(row[colFactura] || '').trim().toUpperCase() : '';
-      const valorEstado = colEstado !== -1 ? String(row[colEstado] || '').trim().toUpperCase() : '';
-
-      if (valorFactura.includes('FDC') || valorEstado.includes('FDC')) {
-          continue; // El sistema ignora y salta la fila del FDC por completo
-      }
-      // ------------------------------
-
-      const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
+      const op = String(row[opIdx]).trim().replace(/^0+/, ''); 
       const ord = String(row[cbOrdIdx]).trim();
-      
-      if (op) {
-          INTER_MAP[op] = ord;
-      }
+      if (op) INTER_MAP[op] = ord;
   }
   
   document.getElementById('slot-inter').classList.add('loaded');
   document.getElementById('status-inter').textContent = Object.keys(INTER_MAP).length + ' registros';
   toast('Interbancarios cargados', 'green');
-}
-async function cargarBD(input){
+}async function cargarBD(input){
   const wb=await leerExcel(input.files[0]);
   const sheetName=wb.SheetNames.find(s=>/^BD$/i.test(s))||wb.SheetNames[0];
   const ws=wb.Sheets[sheetName];
