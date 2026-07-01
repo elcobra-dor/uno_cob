@@ -545,29 +545,30 @@ async function cargarInter(input){
   
   let headerIdx = -1, colOpKey = '', colOrdKey = '';
 
-  for (let i = 0; i < Math.min(data.length, 10); i++) {
-    const row = data[i];
-    if (!row || row.length === 0) continue;
-    const keys = row.map(c => String(c).trim());
-    
-    // Busca columnas que digan "Operación" pero que tengan "Número" o "N°", ignorando la de "Tipo"
-    const op = keys.find(k => /num|n°|n[úu]mero/i.test(k) && /operaci/i.test(k)) || keys.find(k => /operaci/i.test(k) && !/tipo/i.test(k));
-    const ord = keys.find(k => /ordenante/i.test(k));
-    
-    if (op && ord) { headerIdx = i; colOpKey = op; colOrdKey = ord; break; }
-  }
+ // --- PASO 1: IDENTIFICAR LAS COLUMNAS ---
+const cabeceras = data[headerIdx].map(h => String(h).trim().toUpperCase());
+const colFactura = cabeceras.indexOf('FACTURA'); 
+const colEstado = cabeceras.indexOf('ESTADO');   
 
-  if (headerIdx === -1) {
-    const rowsBackup = XLSX.utils.sheet_to_json(ws, {defval: ''});
-    const keysBackup = rowsBackup.length ? Object.keys(rowsBackup[0]) : [];
-    colOpKey = keysBackup.find(k => /num|n°|n[úu]mero/i.test(k) && /operaci/i.test(k)) || keysBackup.find(k => /operaci/i.test(k) && !/tipo/i.test(k));
-    colOrdKey = keysBackup.find(k => /ordenante/i.test(k));
-    
-    if (!colOpKey || !colOrdKey) { alert('No se detectaron las columnas de N° de Operación u Ordenante.'); return; }
-    
-    rowsBackup.forEach(r => {
-      const op = String(r[colOpKey]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
-      if (op) INTER_MAP[op] = String(r[colOrdKey]).trim();
+// --- CICLO PRINCIPAL ---
+for (let i = headerIdx + 1; i < data.length; i++) {
+    const row = data[i];
+    if (!row || row.length <= Math.max(opIdx, cbOrdIdx)) continue;
+
+    // --- PASO 2: LA BARRERA FDC ---
+    const valorFactura = colFactura !== -1 ? String(row[colFactura] || '').trim().toUpperCase() : '';
+    const valorEstado = colEstado !== -1 ? String(row[colEstado] || '').trim().toUpperCase() : '';
+
+    if (valorFactura.includes('FDC') || valorEstado.includes('FDC')) {
+        continue; // Ignoramos la fila FDC
+    }
+
+    // --- PROCESAMIENTO ORIGINAL (Solo lo declaramos una vez) ---
+    const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
+    const ord = String(row[cbOrdIdx]).trim();
+    if (op) INTER_MAP[op] = ord;
+
+    // ... (tu código continúa normal hacia abajo)
     });
   } else {
     const headers = data[headerIdx].map(c => String(c).trim());
