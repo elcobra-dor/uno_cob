@@ -569,7 +569,7 @@ for (let i = headerIdx + 1; i < data.length; i++) {
     if (op) INTER_MAP[op] = ord;
 
     // ... (tu código continúa normal hacia abajo)
-    });
+    };
   } else {
     const headers = data[headerIdx].map(c => String(c).trim());
     const opIdx = headers.indexOf(colOpKey), cbOrdIdx = headers.indexOf(colOrdKey);
