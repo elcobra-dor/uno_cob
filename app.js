@@ -558,20 +558,32 @@ async function cargarInter(input){
   
   let headerIdx = -1, colOpKey = '', colOrdKey = '';
 
+  // --- RADAR FLEXIBLE Y PRECISO DE CABECERAS ---
   for (let i = 0; i < Math.min(data.length, 25); i++) {
-    const row = data[i].map(c => String(c).trim().toUpperCase());
-    if (row.includes('NRO. OPERACION') && row.includes('ORDENANTE')) {
-      headerIdx = i; colOpKey = 'NRO. OPERACION'; colOrdKey = 'ORDENANTE'; break;
+    const filaArr = data[i].map(c => String(c).trim().toUpperCase());
+    
+    // Primero buscamos columnas que digan Número o Nro explícitamente para evitar "Tipo de Operación"
+    let opMatch = filaArr.find(c => c.includes('NÚMERO - OPERACIÓN') || c.includes('NRO') || c.includes('NUMERO'));
+    
+    // Si no encuentra "Número", busca "Operación" pero ignorando la columna "Tipo"
+    if (!opMatch) {
+      opMatch = filaArr.find(c => c.includes('OPERACI') && !c.includes('TIPO'));
     }
-    if (row.includes('NRO. DE OPERACIÓN') && row.includes('ORDENANTE')) {
-      headerIdx = i; colOpKey = 'NRO. DE OPERACIÓN'; colOrdKey = 'ORDENANTE'; break;
-    }
-    if (row.includes('OPERACION') && row.includes('BENEFICIARIO/ORDENANTE')) {
-      headerIdx = i; colOpKey = 'OPERACION'; colOrdKey = 'BENEFICIARIO/ORDENANTE'; break;
+    
+    const ordMatch = filaArr.find(c => c.includes('ORDENANTE') || c.includes('BENEFICIARIO') || c.includes('CLIENTE') || c.includes('NOMBRE'));
+
+    if (opMatch && ordMatch) {
+      headerIdx = i; 
+      colOpKey = opMatch; 
+      colOrdKey = ordMatch; 
+      break;
     }
   }
 
   if (headerIdx === -1) { 
+    alert('No se detectaron columnas de Operación y Ordenante en tu Excel interbancario.'); 
+    return; 
+  }
     alert('No se detectaron columnas de Operación y Ordenante.'); 
     return; 
   }
