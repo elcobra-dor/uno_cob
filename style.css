@@ -187,3 +187,15 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
     text-overflow: ellipsis; /* Pone puntos suspensivos si el texto es muy largo */
     max-width: 300px; /* Evita que una celda ensanche toda la tabla innecesariamente */
 }
+/* Esto fuerza a todas las tablas a ser respetuosas con el ancho de la pantalla */
+table {
+    display: block !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+}
+
+/* Esto le da un aspecto limpio a la tabla y separa el scroll */
+#tabla-facturas, #cuerpo-tabla {
+    width: 100% !important;
+}
