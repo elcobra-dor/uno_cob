@@ -599,10 +599,9 @@ for (let i = headerIdx + 1; i < data.length; i++) {
       // Tu código original continúa intacto a partir de aquí:
       const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
       const ord = String(row[cbOrdIdx]).trim();
-      if (op) INTER_MAP[op] = ord;
       const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
       const ord = String(row[cbOrdIdx]).trim();
-      if (op) INTER_MAP[op] = ord;
+    if (op) INTER_MAP[op] = ord;
     }
   }
   
