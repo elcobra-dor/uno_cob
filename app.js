@@ -545,6 +545,7 @@ async function cargarInter(input){
   
   let headerIdx = -1, colOpKey = '', colOrdKey = '';
 
+  // 1. Buscador de cabeceras restaurado
   for (let i = 0; i < Math.min(data.length, 25); i++) {
     const row = data[i].map(c => String(c).trim().toUpperCase());
     if (row.includes('NRO. OPERACION') && row.includes('ORDENANTE')) {
@@ -558,7 +559,10 @@ async function cargarInter(input){
     }
   }
 
-  if (headerIdx === -1) { alert('No se detectaron columnas de Operación y Ordenante.'); return; }
+  if (headerIdx === -1) { 
+    alert('No se detectaron columnas de interbancario'); 
+    return; 
+  }
 
   const headers = data[headerIdx].map(c => String(c).trim());
   const opIdx = headers.indexOf(colOpKey), cbOrdIdx = headers.indexOf(colOrdKey);
@@ -594,7 +598,6 @@ async function cargarInter(input){
   document.getElementById('status-inter').textContent = Object.keys(INTER_MAP).length + ' registros';
   toast('Interbancarios cargados', 'green');
 }
-
 async function cargarBD(input){
   const wb=await leerExcel(input.files[0]);
   const sheetName=wb.SheetNames.find(s=>/^BD$/i.test(s))||wb.SheetNames[0];
