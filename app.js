@@ -573,9 +573,32 @@ async function cargarInter(input){
     const headers = data[headerIdx].map(c => String(c).trim());
     const opIdx = headers.indexOf(colOpKey), cbOrdIdx = headers.indexOf(colOrdKey);
     
-    for (let i = headerIdx + 1; i < data.length; i++) {
+   // --- PASO 1: IDENTIFICAR LAS COLUMNAS (Va justo antes del 'for') ---
+// Leemos la fila de cabeceras para saber en qué posición están "Factura" y "Estado"
+const cabeceras = data[headerIdx].map(h => String(h).trim().toUpperCase());
+const colFactura = cabeceras.indexOf('FACTURA'); // Busca la columna que se llame FACTURA
+const colEstado = cabeceras.indexOf('ESTADO');   // Busca la columna que se llame ESTADO
+
+// Aquí empieza tu ciclo tal cual lo tenías
+for (let i = headerIdx + 1; i < data.length; i++) {
       const row = data[i];
       if (!row || row.length <= Math.max(opIdx, cbOrdIdx)) continue;
+
+      // --- PASO 2: LA BARRERA FDC (Va justo después de validar la fila) ---
+      // Leemos el contenido de las celdas (solo si las columnas existen)
+      const valorFactura = colFactura !== -1 ? String(row[colFactura] || '').trim().toUpperCase() : '';
+      const valorEstado = colEstado !== -1 ? String(row[colEstado] || '').trim().toUpperCase() : '';
+
+      // Si cualquiera de las dos celdas dice "FDC", ignoramos esta fila por completo
+      if (valorFactura.includes('FDC') || valorEstado.includes('FDC')) {
+          continue; 
+      }
+      // ------------------------------------------------------------------
+
+      // Tu código original continúa intacto a partir de aquí:
+      const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
+      const ord = String(row[cbOrdIdx]).trim();
+      if (op) INTER_MAP[op] = ord;
       const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
       const ord = String(row[cbOrdIdx]).trim();
       if (op) INTER_MAP[op] = ord;
