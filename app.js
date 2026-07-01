@@ -545,31 +545,21 @@ async function cargarInter(input){
   
   let headerIdx = -1, colOpKey = '', colOrdKey = '';
 
- // --- PASO 1: IDENTIFICAR LAS COLUMNAS ---
-const cabeceras = data[headerIdx].map(h => String(h).trim().toUpperCase());
-const colFactura = cabeceras.indexOf('FACTURA'); 
-const colEstado = cabeceras.indexOf('ESTADO');   
-
-// --- CICLO PRINCIPAL ---
-for (let i = headerIdx + 1; i < data.length; i++) {
-    const row = data[i];
-    if (!row || row.length <= Math.max(opIdx, cbOrdIdx)) continue;
-
-    // --- PASO 2: LA BARRERA FDC ---
-    const valorFactura = colFactura !== -1 ? String(row[colFactura] || '').trim().toUpperCase() : '';
-    const valorEstado = colEstado !== -1 ? String(row[colEstado] || '').trim().toUpperCase() : '';
-
-    if (valorFactura.includes('FDC') || valorEstado.includes('FDC')) {
-        continue; // Ignoramos la fila FDC
+  for (let i = 0; i < Math.min(data.length, 25); i++) {
+    const row = data[i].map(c => String(c).trim().toUpperCase());
+    if (row.includes('NRO. OPERACION') && row.includes('ORDENANTE')) {
+      headerIdx = i; colOpKey = 'NRO. OPERACION'; colOrdKey = 'ORDENANTE'; break;
     }
+    if (row.includes('NRO. DE OPERACIÓN') && row.includes('ORDENANTE')) {
+      headerIdx = i; colOpKey = 'NRO. DE OPERACIÓN'; colOrdKey = 'ORDENANTE'; break;
+    }
+    if (row.includes('OPERACION') && row.includes('BENEFICIARIO/ORDENANTE')) {
+      headerIdx = i; colOpKey = 'OPERACION'; colOrdKey = 'BENEFICIARIO/ORDENANTE'; break;
+    }
+  }
 
-    // --- PROCESAMIENTO ORIGINAL (Solo lo declaramos una vez) ---
-    const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
-    const ord = String(row[cbOrdIdx]).trim();
-    if (op) INTER_MAP[op] = ord;
-  } // <-- Aquí quitamos el punto y coma que causaba el error
-} else {
-  // --- LÓGICA PRINCIPAL (RESTO DE BANCOS) ---
+  if (headerIdx === -1) { alert('No se detectaron columnas de Operación y Ordenante.'); return; }
+
   const headers = data[headerIdx].map(c => String(c).trim());
   const opIdx = headers.indexOf(colOpKey), cbOrdIdx = headers.indexOf(colOrdKey);
     
@@ -592,16 +582,12 @@ for (let i = headerIdx + 1; i < data.length; i++) {
       }
       // ------------------------------
 
-      // (A partir de aquí, tu código continúa normal hacia abajo procesando montos, fechas, etc.)
-      // ------------------------------------------------------------------
-
-      // Tu código original continúa intacto a partir de aquí:
       const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
       const ord = String(row[cbOrdIdx]).trim();
-      const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
-      const ord = String(row[cbOrdIdx]).trim();
-    if (op) INTER_MAP[op] = ord;
-    }
+      
+      if (op) {
+          INTER_MAP[op] = ord;
+      }
   }
   
   document.getElementById('slot-inter').classList.add('loaded');
