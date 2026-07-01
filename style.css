@@ -28,30 +28,16 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .nav-item .icon{font-size:16px;width:20px;text-align:center}
 .sidebar-footer{padding:14px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text3)}
 
-/* MAIN - CORREGIDO PARA EVITAR RECORTES Y SUPERPOSICIONES */
+/* MAIN */
 .main {
     margin-left: 220px;
-    width: calc(100% - 220px); /* El ancho es exactamente el resto de la pantalla */
+    width: calc(100% - 220px); 
     min-height: 100vh;
 }
-.topbar {
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border);
-    padding: 12px 28px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    position: sticky;
-    top: 0;
-    z-index: 40;
-}
+.topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:40}
 .topbar-title{font-size:15px;font-weight:600;color:var(--text)}
 .topbar-right{display:flex;gap:8px;align-items:center}
-.content {
-    padding: 28px;
-    width: 100%;
-}
+.content{padding:28px;width:100%;}
 
 /* STATS ROW */
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
@@ -185,7 +171,8 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .dot.proxima{background:var(--amber)}
 .dot.ok{background:var(--green)}
 
-/* --- TABLAS: SOLUCIÓN LIMPIA Y SIN CONFLICTOS --- */
+/* --- TABLAS: SOLUCIÓN PRECISA (RESTAURADA A SU ESTADO NATURAL) --- */
+/* Solo el envoltorio de la tabla gigante tendrá la barra de desplazamiento */
 .table-wrap {
     background: var(--bg2);
     border: 1px solid var(--border);
@@ -193,14 +180,20 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
     box-shadow: var(--shadow);
     width: 100%;
     margin-top: 15px;
-    overflow-x: auto !important; /* El scroll ahora vive solo en este envoltorio seguro */
+    overflow-x: auto; /* Activamos scroll horizontal solo en este contenedor */
 }
 
+/* Todas las tablas regresan a su comportamiento natural para no romper los reportes */
 table {
     width: 100%;
     border-collapse: collapse;
-    white-space: nowrap; /* Impide que las celdas se partan en varias líneas y se aplasten */
-    min-width: 1000px; /* Al obligar a un tamaño mínimo, el scroll horizontal se activa automáticamente */
+    display: table;
+}
+
+/* Solo la tabla pesada de adentro evitará los saltos de línea */
+.table-wrap table, #tabla-facturas {
+    white-space: nowrap; 
+    min-width: max-content; /* Crecerá solo lo que necesite, sin forzar 1000px */
 }
 
 th, td {
