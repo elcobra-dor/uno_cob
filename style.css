@@ -15,8 +15,15 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;min-height:100vh}
 
-/* SIDEBAR */
-.sidebar{position:fixed;left:0;top:0;bottom:0;width:220px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:50}
+/* SIDEBAR CON TRANSICIÓN */
+.sidebar{
+  position:fixed;left:0;top:0;bottom:0;width:220px;background:var(--bg2);
+  border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:50;
+  transition: transform .25s ease;
+}
+.sidebar.collapsed{
+  transform: translateX(-220px);
+}
 .sidebar-logo{padding:20px 20px 16px;border-bottom:1px solid var(--border)}
 .logo-title{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text);letter-spacing:.5px}
 .logo-sub{font-size:11px;color:var(--text3);margin-top:2px}
@@ -28,18 +35,56 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .nav-item .icon{font-size:16px;width:20px;text-align:center}
 .sidebar-footer{padding:14px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text3)}
 
-/* MAIN */
+/* BOTÓN TOGGLE */
+.sidebar-toggle{
+  position:fixed;
+  top:14px;
+  left:228px;
+  z-index:60;
+  width:32px;height:32px;
+  border-radius:8px;
+  border:1px solid var(--border2);
+  background:var(--bg2);
+  color:var(--text2);
+  cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;
+  box-shadow:var(--shadow);
+  transition: left .25s ease;
+}
+.sidebar-toggle.collapsed{
+  left:14px;
+}
+.sidebar-toggle:hover{border-color:var(--green);color:var(--green-text)}
+
+/* MAIN FLEXIBLE */
 .main {
     margin-left: 220px;
-    width: calc(100% - 220px); 
+    width: calc(100% - 220px);
     min-height: 100vh;
+    transition: margin-left .25s ease, width .25s ease;
 }
-.topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:40}
+.main.expanded {
+    margin-left: 0;
+    width: 100%;
+}
+.topbar {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+}
 .topbar-title{font-size:15px;font-weight:600;color:var(--text)}
 .topbar-right{display:flex;gap:8px;align-items:center}
 .content{padding:28px;width:100%;}
 
-/* STATS ROW */
+/* STATS ROW & OTROS ESTILOS BASE */
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
 .stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;box-shadow:var(--shadow)}
 .stat-card .label{font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px}
@@ -48,12 +93,8 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .stat-card.green .value{color:var(--green-text)}
 .stat-card.amber .value{color:var(--amber-text)}
 .stat-card.blue .value{color:var(--blue-text)}
-
-/* PROGRESS */
 .progress-wrap{height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;margin-bottom:20px}
 .progress-bar{height:100%;background:var(--green);border-radius:2px;transition:width .4s}
-
-/* CARDS */
 .section-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .section-title{font-size:13px;font-weight:600;color:var(--text2);letter-spacing:.3px}
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:10px;box-shadow:var(--shadow);border-left:3px solid var(--border2);transition:border-color .15s}
@@ -77,8 +118,6 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .factura-select{flex:1;min-width:200px;font-family:var(--sans);font-size:12px;padding:6px 10px;border:1px solid var(--border2);border-radius:6px;background:var(--bg3);color:var(--text);outline:none}
 .factura-select:focus{border-color:var(--green)}
 .reason{font-size:11px;color:var(--blue-text);margin-top:6px;font-family:var(--mono)}
-
-/* BUTTONS */
 .btn{font-family:var(--mono);font-size:11px;padding:7px 14px;border-radius:6px;border:1px solid var(--border2);cursor:pointer;background:var(--bg2);color:var(--text2);font-weight:500;white-space:nowrap;letter-spacing:.5px;transition:all .15s}
 .btn:hover{border-color:var(--text2);color:var(--text)}
 .btn-primary{background:var(--green);border-color:var(--green);color:#fff;font-size:12px;padding:8px 18px}
@@ -93,16 +132,12 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .btn-blue:hover{background:var(--blue);color:#fff}
 .btn-amber{border-color:var(--amber);color:var(--amber-text);background:var(--amber-dim)}
 .btn-amber:hover{background:var(--amber);color:#fff}
-
-/* TOOLBAR */
 .toolbar{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;box-shadow:var(--shadow)}
 .toolbar select,.toolbar input[type=text]{font-family:var(--sans);font-size:12px;padding:6px 10px;border:1px solid var(--border2);border-radius:6px;background:var(--bg3);color:var(--text);outline:none}
 .toolbar select:focus,.toolbar input[type=text]:focus{border-color:var(--green)}
 .toolbar input[type=text]{width:220px}
 .toolbar label{font-size:11px;color:var(--text3);letter-spacing:.3px;white-space:nowrap}
 .sep{width:1px;height:20px;background:var(--border)}
-
-/* UPLOAD PANEL */
 .upload-panel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow);max-width:800px;margin:0 auto}
 .upload-title{font-family:var(--mono);font-size:13px;color:var(--text2);letter-spacing:.5px;margin-bottom:6px}
 .upload-desc{font-size:12px;color:var(--text3);margin-bottom:24px;line-height:1.7}
@@ -119,22 +154,16 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .file-status{font-size:11px;color:var(--text3)}
 .file-slot.loaded .file-status{color:var(--green-text)}
 .file-slot.optional.loaded .file-status{color:var(--blue-text)}
-
-/* TOAST */
 .toast{position:fixed;bottom:24px;right:24px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 18px;font-family:var(--mono);font-size:12px;color:var(--text);z-index:999;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;box-shadow:var(--shadow-md)}
 .toast.show{opacity:1;transform:translateY(0)}
 .toast.green{border-color:var(--green);color:var(--green-text);background:var(--green-dim)}
 .toast.amber{border-color:var(--amber);color:var(--amber-text);background:var(--amber-dim)}
-
-/* MODAL */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:200;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s}
 .modal-overlay.show{opacity:1;pointer-events:all}
 .modal{background:var(--bg2);border-radius:12px;padding:28px;max-width:480px;width:90%;box-shadow:var(--shadow-md)}
 .modal-title{font-size:15px;font-weight:600;margin-bottom:8px}
 .modal-desc{font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end}
-
-/* LOGIN */
 .login-overlay{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center}
 .login-box{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:40px;width:100%;max-width:380px;box-shadow:var(--shadow-md);text-align:center}
 .login-logo{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--text);letter-spacing:1px;margin-bottom:4px}
@@ -144,8 +173,6 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .login-btn{width:100%;padding:11px;background:var(--green);color:#fff;border:none;border-radius:8px;font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:.5px;cursor:pointer;transition:background .15s;margin-top:4px}
 .login-btn:hover{background:var(--green-text)}
 .login-error{font-size:12px;color:var(--red);margin-top:10px;display:none}
-
-/* EMPTY */
 .empty{text-align:center;padding:60px 24px;color:var(--text3);font-size:13px}
 .empty .empty-icon{font-size:40px;display:block;margin-bottom:12px}
 
@@ -157,8 +184,6 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .page.active { 
     display: block; 
 }
-
-/* FACTURAS LIST */
 .fact-row{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px;transition:background .1s}
 .fact-row:hover{background:var(--bg3)}
 .fact-row:last-child{border-bottom:none}
@@ -171,8 +196,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .dot.proxima{background:var(--amber)}
 .dot.ok{background:var(--green)}
 
-/* --- TABLAS: SOLUCIÓN PRECISA (RESTAURADA A SU ESTADO NATURAL) --- */
-/* Solo el envoltorio de la tabla gigante tendrá la barra de desplazamiento */
+/* --- TABLAS CORREGIDAS PARA QUE REPORTES FUNCIONE --- */
 .table-wrap {
     background: var(--bg2);
     border: 1px solid var(--border);
@@ -180,20 +204,18 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
     box-shadow: var(--shadow);
     width: 100%;
     margin-top: 15px;
-    overflow-x: auto; /* Activamos scroll horizontal solo en este contenedor */
+    overflow-x: auto;
 }
 
-/* Todas las tablas regresan a su comportamiento natural para no romper los reportes */
 table {
     width: 100%;
     border-collapse: collapse;
     display: table;
 }
 
-/* Solo la tabla pesada de adentro evitará los saltos de línea */
 .table-wrap table, #tabla-facturas {
     white-space: nowrap; 
-    min-width: max-content; /* Crecerá solo lo que necesite, sin forzar 1000px */
+    min-width: max-content; 
 }
 
 th, td {
