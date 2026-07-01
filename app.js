@@ -1428,3 +1428,17 @@ function renderReportes() {
       </table>`;
   document.getElementById('reporte-rubros').innerHTML = htmlRubros;
 }
+// Funcionalidad para ocultar y mostrar el panel lateral
+document.addEventListener('DOMContentLoaded', () => {
+    const btnToggle = document.getElementById('btn-toggle-menu');
+    const sidebar = document.querySelector('.sidebar');
+    const main = document.querySelector('.main');
+
+    if(btnToggle && sidebar && main) {
+        btnToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            main.classList.toggle('expanded');
+            btnToggle.classList.toggle('collapsed');
+        });
+    }
+});
