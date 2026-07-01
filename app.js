@@ -602,7 +602,8 @@ async function cargarInter(input){
   document.getElementById('slot-inter').classList.add('loaded');
   document.getElementById('status-inter').textContent = Object.keys(INTER_MAP).length + ' registros';
   toast('Interbancarios cargados', 'green');
-}async function cargarBD(input){
+}
+async function cargarBD(input){
   const wb=await leerExcel(input.files[0]);
   const sheetName=wb.SheetNames.find(s=>/^BD$/i.test(s))||wb.SheetNames[0];
   const ws=wb.Sheets[sheetName];
