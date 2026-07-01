@@ -567,33 +567,32 @@ for (let i = headerIdx + 1; i < data.length; i++) {
     const op = String(row[opIdx]).trim().replace(/^0+/, ''); // Quita ceros a la izquierda
     const ord = String(row[cbOrdIdx]).trim();
     if (op) INTER_MAP[op] = ord;
-
-    // ... (tu código continúa normal hacia abajo)
-    };
-  } else {
-    const headers = data[headerIdx].map(c => String(c).trim());
-    const opIdx = headers.indexOf(colOpKey), cbOrdIdx = headers.indexOf(colOrdKey);
+  } // <-- Aquí quitamos el punto y coma que causaba el error
+} else {
+  // --- LÓGICA PRINCIPAL (RESTO DE BANCOS) ---
+  const headers = data[headerIdx].map(c => String(c).trim());
+  const opIdx = headers.indexOf(colOpKey), cbOrdIdx = headers.indexOf(colOrdKey);
     
-   // --- PASO 1: IDENTIFICAR LAS COLUMNAS (Va justo antes del 'for') ---
-// Leemos la fila de cabeceras para saber en qué posición están "Factura" y "Estado"
-const cabeceras = data[headerIdx].map(h => String(h).trim().toUpperCase());
-const colFactura = cabeceras.indexOf('FACTURA'); // Busca la columna que se llame FACTURA
-const colEstado = cabeceras.indexOf('ESTADO');   // Busca la columna que se llame ESTADO
+  // --- PASO 1: IDENTIFICAR LAS COLUMNAS FDC ---
+  const cabeceras = data[headerIdx].map(h => String(h).trim().toUpperCase());
+  const colFactura = cabeceras.indexOf('FACTURA'); 
+  const colEstado = cabeceras.indexOf('ESTADO');   
 
-// Aquí empieza tu ciclo tal cual lo tenías
-for (let i = headerIdx + 1; i < data.length; i++) {
+  // --- CICLO PRINCIPAL ---
+  for (let i = headerIdx + 1; i < data.length; i++) {
       const row = data[i];
       if (!row || row.length <= Math.max(opIdx, cbOrdIdx)) continue;
 
-      // --- PASO 2: LA BARRERA FDC (Va justo después de validar la fila) ---
-      // Leemos el contenido de las celdas (solo si las columnas existen)
+      // --- PASO 2: LA BARRERA FDC ---
       const valorFactura = colFactura !== -1 ? String(row[colFactura] || '').trim().toUpperCase() : '';
       const valorEstado = colEstado !== -1 ? String(row[colEstado] || '').trim().toUpperCase() : '';
 
-      // Si cualquiera de las dos celdas dice "FDC", ignoramos esta fila por completo
       if (valorFactura.includes('FDC') || valorEstado.includes('FDC')) {
-          continue; 
+          continue; // El sistema ignora y salta la fila del FDC por completo
       }
+      // ------------------------------
+
+      // (A partir de aquí, tu código continúa normal hacia abajo procesando montos, fechas, etc.)
       // ------------------------------------------------------------------
 
       // Tu código original continúa intacto a partir de aquí:
