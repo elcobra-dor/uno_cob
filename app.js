@@ -584,19 +584,22 @@ async function cargarInter(input){
     alert('No se detectaron columnas de Operación y Ordenante en tu Excel interbancario.'); 
     return; 
   }
-    alert('No se detectaron columnas de Operación y Ordenante.'); 
-    return; 
-  }
 
-  const headers = data[headerIdx].map(c => String(c).trim());
-  const opIdx = headers.indexOf(colOpKey), cbOrdIdx = headers.indexOf(colOrdKey);
+  const headers = data[headerIdx].map(c => String(c).trim().toUpperCase());
+  const opIdx = headers.indexOf(colOpKey);
+  const cbOrdIdx = headers.indexOf(colOrdKey);
     
+  // --- CICLO PRINCIPAL ---
   for (let i = headerIdx + 1; i < data.length; i++) {
       const row = data[i];
       if (!row || row.length <= Math.max(opIdx, cbOrdIdx)) continue;
-      const op = String(row[opIdx]).trim().replace(/^0+/, ''); 
-      const ord = String(row[cbOrdIdx]).trim();
-      if (op) INTER_MAP[op] = ord;
+      
+      const op = String(row[opIdx] || '').trim().replace(/^0+/, ''); 
+      const ord = String(row[cbOrdIdx] || '').trim();
+      
+      if (op) {
+          INTER_MAP[op] = ord;
+      }
   }
   
   document.getElementById('slot-inter').classList.add('loaded');
