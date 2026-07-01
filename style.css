@@ -164,3 +164,26 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 
 /* TABLE */
 .table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+/* 1. Contenedor restrictivo */
+.table-container {
+    width: 100%;
+    overflow-x: auto; /* Esto crea la barra de scroll horizontal */
+    margin-top: 20px;
+    padding-bottom: 10px;
+}
+
+/* 2. Forzar que la tabla respete el ancho de su contenedor */
+#tabla-facturas {
+    display: table !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: auto;
+}
+
+/* 3. Asegurar que las celdas no rompan el diseño */
+#tabla-facturas td, #tabla-facturas th {
+    white-space: nowrap; /* Evita que el texto se salte de línea */
+    overflow: hidden;
+    text-overflow: ellipsis; /* Pone puntos suspensivos si el texto es muy largo */
+    max-width: 300px; /* Evita que una celda ensanche toda la tabla innecesariamente */
+}
