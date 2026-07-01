@@ -29,11 +29,11 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .sidebar-footer{padding:14px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text3)}
 
 /* MAIN */
-.main{margin-left:220px;min-height:100vh}
+.main{margin-left:220px;min-height:100vh;max-width:100%;overflow-x:hidden;}
 .topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:40}
 .topbar-title{font-size:15px;font-weight:600;color:var(--text)}
 .topbar-right{display:flex;gap:8px;align-items:center}
-.content{padding:28px}
+.content{padding:28px;max-width:100%;}
 
 /* STATS ROW */
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
@@ -143,59 +143,4 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 
 /* EMPTY */
 .empty{text-align:center;padding:60px 24px;color:var(--text3);font-size:13px}
-.empty .empty-icon{font-size:40px;display:block;margin-bottom:12px}
-
-/* PAGE SECTIONS */
-.page{display:none}
-.page.active{display:block}
-
-/* FACTURAS LIST */
-.fact-row{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px;transition:background .1s}
-.fact-row:hover{background:var(--bg3)}
-.fact-row:last-child{border-bottom:none}
-.fact-name{font-size:13px;font-weight:500;color:var(--text)}
-.fact-num{font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px}
-.fact-dates{font-size:11px;color:var(--text3);text-align:right}
-.fact-saldo{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text);text-align:right;white-space:nowrap}
-.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.dot.vencida{background:var(--red)}
-.dot.proxima{background:var(--amber)}
-.dot.ok{background:var(--green)}
-
-/* TABLE */
-.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
-/* 1. Contenedor restrictivo */
-.table-container {
-    width: 100%;
-    overflow-x: auto; /* Esto crea la barra de scroll horizontal */
-    margin-top: 20px;
-    padding-bottom: 10px;
-}
-
-/* 2. Forzar que la tabla respete el ancho de su contenedor */
-#tabla-facturas {
-    display: table !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    table-layout: auto;
-}
-
-/* 3. Asegurar que las celdas no rompan el diseño */
-#tabla-facturas td, #tabla-facturas th {
-    white-space: nowrap; /* Evita que el texto se salte de línea */
-    overflow: hidden;
-    text-overflow: ellipsis; /* Pone puntos suspensivos si el texto es muy largo */
-    max-width: 300px; /* Evita que una celda ensanche toda la tabla innecesariamente */
-}
-/* Esto fuerza a todas las tablas a ser respetuosas con el ancho de la pantalla */
-table {
-    display: block !important;
-    max-width: 100% !important;
-    overflow-x: auto !important;
-    white-space: nowrap !important;
-}
-
-/* Esto le da un aspecto limpio a la tabla y separa el scroll */
-#tabla-facturas, #cuerpo-tabla {
-    width: 100% !important;
-}
+.empty .empty-icon{font-size:40px;display:block;margin-bottom:12px
