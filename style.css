@@ -143,4 +143,56 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 
 /* EMPTY */
 .empty{text-align:center;padding:60px 24px;color:var(--text3);font-size:13px}
-.empty .empty-icon{font-size:40px;display:block;margin-bottom:12px
+.empty .empty-icon{font-size:40px;display:block;margin-bottom:12px}
+
+/* PAGE SECTIONS (AQUÍ ESTABA EL ERROR, YA RESTAURADO) */
+.page{display:none}
+.page.active{display:block}
+
+/* FACTURAS LIST */
+.fact-row{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px;transition:background .1s}
+.fact-row:hover{background:var(--bg3)}
+.fact-row:last-child{border-bottom:none}
+.fact-name{font-size:13px;font-weight:500;color:var(--text)}
+.fact-num{font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px}
+.fact-dates{font-size:11px;color:var(--text3);text-align:right}
+.fact-saldo{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text);text-align:right;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.vencida{background:var(--red)}
+.dot.proxima{background:var(--amber)}
+.dot.ok{background:var(--green)}
+
+/* --- TABLAS: SOLUCIÓN LIMPIA Y SIN CONFLICTOS --- */
+.table-wrap {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    width: 100%;
+    margin-top: 15px;
+    overflow-x: auto !important; /* El scroll ahora vive solo en este envoltorio seguro */
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap; /* Impide que las celdas se partan en varias líneas y se aplasten */
+    min-width: 1000px; /* Al obligar a un tamaño mínimo, el scroll horizontal se activa automáticamente */
+}
+
+th, td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text);
+}
+
+th {
+    background: var(--bg3);
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+}
