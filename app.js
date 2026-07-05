@@ -485,17 +485,18 @@ async function cargarBancos(input){
       }
     }
   } else {
-   // --- LÓGICA BCP ---
-  const headers = rawData[headerIdx].map(h => String(h).trim().toLowerCase());
+  // --- LÓGICA BCP / LIBRO MAYOR CONSOLIDADO ---
+  const headers = rawData[headerIdx].map(h => String(h).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
   const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta'));
   const colDesc = headers.findIndex(h => h.includes('descripci') || h.includes('glosa'));
   const colMonto = headers.findIndex(h => /^monto$/.test(h) || h.includes('importe'));
-  const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('número')));
+  const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('numero')));
   const colRef2 = headers.findIndex(h => h.includes('referencia2'));
 
-  // --- BUSCAMOS LAS COLUMNAS FDC AQUÍ ---
+  // --- LAS NUEVAS COLUMNAS CLAVE ---
   const colFactura = headers.findIndex(h => h === 'factura');
   const colEstado = headers.findIndex(h => h === 'estado');
+  const colOrd = headers.findIndex(h => h === 'ordenante'); // <-- Atrapamos el ordenante
 
   const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
 
@@ -503,25 +504,29 @@ async function cargarBancos(input){
     const r = rawData[i];
     if(!r || r.length === 0) continue;
 
-    // --- BARRERA FDC ACTIVA ---
+    // --- REGLA ESTRICTA: IGNORAR FDC ---
     const valorFactura = colFactura !== -1 ? String(r[colFactura] || '').trim().toUpperCase() : '';
     const valorEstado = colEstado !== -1 ? String(r[colEstado] || '').trim().toUpperCase() : '';
     
-    if (valorFactura.includes('FDC') || valorEstado.includes('FDC')) {
-        continue; // Ignoramos absolutamente esta fila
+    if (valorFactura === 'FDC' || valorFactura.includes('FDC') || valorEstado.includes('FDC')) {
+        continue; // El sistema se salta esta fila de inmediato (Fondo de Capacitación)
     }
-    // --------------------------
+    // ------------------------------------
 
     const montoVal = limpiarMonto(r[colMonto]);
     const opVal = String(r[opIndex] || '').trim();
 
     if(!opVal || montoVal === 0) continue;
 
+    // EXTRAEMOS EL ORDENANTE PARA LAS SUGERENCIAS
+    const ordVal = colOrd !== -1 ? String(r[colOrd] || '').trim() : '';
+
     const obj = {
       operacion: opVal,
       fecha: fmtFecha(r[colFecha] || ''),
       descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
       referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '',
+      ordenante: ordVal, // <-- LE ENTREGAMOS EL DATO A TU MOTOR DE SUGERENCIAS
       moneda: monedaBanco
     };
 
