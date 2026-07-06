@@ -527,8 +527,14 @@ async function cargarBancos(input){
   const colFactura = headers.findIndex(h => h === 'factura');
   const colEstado = headers.findIndex(h => h === 'estado');
   const colOrd = headers.findIndex(h => h === 'ordenante'); // <-- Atrapamos el ordenante
+  // Este formato (Libro Mayor Consolidado) trae moneda POR FILA en una columna "Moneda"
+  // con valores como "01.Soles" / "02.Dolares" — no por archivo completo. Si existe, tiene
+  // prioridad absoluta sobre el detector genérico de encabezado (monedaBanco), porque un
+  // mismo archivo puede mezclar cuentas en soles y en dólares (ej. BBVA 131 USD + BBVA 304 PEN).
+  const colMoneda = headers.findIndex(h => h === 'moneda' || h.includes('moneda'));
 
   const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
+  let contPEN=0, contUSD=0;
 
   for(let i = headerIdx + 1; i < rawData.length; i++) {
     const r = rawData[i];
@@ -551,13 +557,22 @@ async function cargarBancos(input){
     // EXTRAEMOS EL ORDENANTE PARA LAS SUGERENCIAS
     const ordVal = colOrd !== -1 ? String(r[colOrd] || '').trim() : '';
 
+    // Moneda real de ESTA fila: primero la columna "Moneda" (01.Soles / 02.Dolares),
+    // y solo si no existe esa columna caemos al detector genérico del archivo completo.
+    let monedaFila = monedaBanco;
+    if(colMoneda !== -1){
+      const txtMoneda = String(r[colMoneda] || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+      monedaFila = (txtMoneda.includes('DOLAR') || txtMoneda.includes('USD')) ? 'USD' : 'PEN';
+    }
+    if(monedaFila==='USD') contUSD++; else contPEN++;
+
     const obj = {
       operacion: opVal,
       fecha: fmtFecha(r[colFecha] || ''),
       descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
       referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '',
       ordenante: ordVal, // <-- LE ENTREGAMOS EL DATO A TU MOTOR DE SUGERENCIAS
-      moneda: monedaBanco
+      moneda: monedaFila
     };
 
     if(montoVal > 0) {
@@ -569,6 +584,8 @@ async function cargarBancos(input){
       egresosRaw.push(obj);
     }
   }
+  // Si detectamos la columna Moneda por fila, mostramos el desglose real en vez de una sola etiqueta
+  if(colMoneda !== -1){ monedaBanco = contUSD>0 ? (contPEN>0 ? `${contPEN} PEN / ${contUSD} USD` : 'USD') : 'PEN'; }
 }
 
   // 3. GUARDADO
