@@ -708,6 +708,19 @@ function extractNumFact(s){
   return null;
 }
 
+// Palabras genéricas del rubro construcción / razones sociales peruanas que NO sirven para
+// identificar una empresa específica (aparecen en cientos de razones sociales distintas).
+// Sin este filtro, un ordenante como "INGENIERIA DE LA CONSTRUCCION SAC" podía "matchear" por
+// puro azar contra cualquier otra empresa que también tuviera la palabra "INGENIERIA", aunque
+// no tuvieran ninguna relación real (ej. apellidos distintos).
+const PALABRAS_GENERICAS_EMPRESA = new Set([
+  'INGENIERIA','INGENIEROS','INGENIERO','CONSTRUCCION','CONSTRUCCIONES','CONSTRUCTORA','CONSTRUCTOR',
+  'CONTRATISTA','CONTRATISTAS','GENERAL','GENERALES','SERVICIO','SERVICIOS','EMPRESA','EMPRESAS',
+  'CORPORACION','GRUPO','PERU','PERUANA','PERUANO','SOCIEDAD','ANONIMA','CERRADA','ABIERTA','LIMITADA',
+  'RESPONSABILIDAD','PROYECTO','PROYECTOS','OBRA','OBRAS','INMOBILIARIA','INMOBILIARIO','INVERSIONES',
+  'INVERSION','COMERCIAL','INDUSTRIAL','NACIONAL','INTERNACIONAL','ASOCIADOS','CONSULTORES','CONSULTORIA',
+  'ARQUITECTOS','ARQUITECTURA','COMPANIA','TRADING','IMPORT','EXPORT','MULTISERVICIOS','SOLUCIONES'
+]);
 function sugerirFactura(pago, usadas){
   const desc=norm(pago.descripcion); const ref2=norm(pago.referencia2||''); const ord=norm(pago.ordenante||'');
   const monto=pago.monto;
@@ -734,10 +747,18 @@ function sugerirFactura(pago, usadas){
   if(nr){ const f=candsExactas.find(x=>x.factura.includes(nr))||facturasMismaMoneda.find(x=>x.factura.includes(nr)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
 
   const candsNombre=facturasMismaMoneda.filter(f=>f.saldo<=monto&&!usadas.has(f.factura));
-  const palabras=(desc+' '+ref2+' '+ord).split(' ').filter(w=>w.length>3);
-  let best=null,bestScore=0;
-  for(const f of candsNombre){ const rs=norm(f.razon_social); let score=0; for(const w of palabras) if(rs.includes(w)) score+=w.length; if(score>bestScore){bestScore=score;best=f;} }
-  if(best&&bestScore>=6){
+  const palabras=(desc+' '+ref2+' '+ord).split(' ').filter(w=>w.length>3&&!PALABRAS_GENERICAS_EMPRESA.has(w));
+  let best=null,bestScore=0,bestPalabrasUsadas=0;
+  for(const f of candsNombre){
+    const rs=norm(f.razon_social);
+    let score=0,palabrasUsadas=0;
+    for(const w of palabras) if(rs.includes(w)){ score+=w.length; palabrasUsadas++; }
+    if(score>bestScore){bestScore=score;best=f;bestPalabrasUsadas=palabrasUsadas;}
+  }
+  // Umbral más alto (8, antes 6) porque ya no contamos palabras genéricas del rubro — lo que
+  // queda son en su mayoría nombres/apellidos propios, así que el puntaje real de una coincidencia
+  // genuina es más bajo que antes. Además exigimos que haya matcheado al menos 1 palabra específica.
+  if(best&&bestScore>=8&&bestPalabrasUsadas>=1){
     const emp=norm(best.razon_social);
     const elegida=[...candsNombre].filter(f=>norm(f.razon_social)===emp).sort((a,b)=>a.fecha_doc.localeCompare(b.fecha_doc))[0]||best;
     return {factura:elegida.factura,razon:elegida.razon_social,motivo:(pago.ordenante?'Ordenante interbancario':'Nombre en descripción')+' — más antigua',confianza:'media'};
