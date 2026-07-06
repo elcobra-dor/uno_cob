@@ -581,7 +581,10 @@ async function cargarBancos(input){
     } else {
       obj.monto = Math.abs(montoVal);
       obj.estado = 'pendiente';
-      egresosRaw.push(obj);
+      // La tabla "egresos" no tiene columna "ordenante" (solo "abonos" la tiene) —
+      // si se envía, Supabase rechaza el upsert completo con error de esquema.
+      const { ordenante, ...objEgreso } = obj;
+      egresosRaw.push(objEgreso);
     }
   }
   // Si detectamos la columna Moneda por fila, mostramos el desglose real en vez de una sola etiqueta
