@@ -56,7 +56,31 @@ function fmtFecha(v){
   return null;
 }
 function leerExcel(file){ return new Promise(res=>{ const r=new FileReader(); r.onload=e=>res(XLSX.read(e.target.result,{type:'binary'})); r.readAsBinaryString(file); }); }
-function fmtMonto(n){ return 'S/ '+parseFloat(n||0).toLocaleString('es-PE',{minimumFractionDigits:2}); }
+function fmtMonto(n, moneda){
+  const simbolo = (moneda==='USD') ? 'US$ ' : 'S/ ';
+  return simbolo+parseFloat(n||0).toLocaleString('es-PE',{minimumFractionDigits:2});
+}
+// Reglas de detracción SUNAT: facturas serie F201/F301 con importe > S/700 (o su equivalente
+// en USD, ~US$212) llevan detracción obligatoria, la cual el Banco de la Nación SOLO acepta
+// en soles (nunca en dólares), aunque la factura se haya emitido en dólares.
+// No sucede siempre (no todas las F201/F301 sobre ese monto tienen detracción registrada),
+// así que esto NUNCA se usa para bloquear ni para asumir automáticamente que ya está pagada;
+// solo para marcar la posibilidad y dejar que la conciliación sea 100% manual, como siempre.
+// No se persiste nada nuevo en Supabase: todo se calcula al vuelo en el navegador.
+const UMBRAL_DETRACCION_PEN = 700;
+const UMBRAL_DETRACCION_USD = 212;
+function esSerieDetraccion(numFactura){
+  const s = String(numFactura||'').toUpperCase();
+  return s.startsWith('F201') || s.startsWith('F301');
+}
+function requiereDetraccionPEN(f){
+  if(!esSerieDetraccion(f.factura)) return false;
+  const umbral = (f.moneda==='USD') ? UMBRAL_DETRACCION_USD : UMBRAL_DETRACCION_PEN;
+  return parseFloat(f.saldo||0) > umbral;
+}
+function esAbonoDetraccionBN(p){
+  return /^DETRACCION BN/i.test(p.descripcion||'');
+}
 function diasHasta(fecha){
   if(!fecha) return null;
   const hoy = new Date(); hoy.setHours(0,0,0,0);
@@ -231,6 +255,11 @@ async function cargarFacturas(input){
       if (!codFactura) return;
       
       const totalFila = parseFloat(r['TOTAL'] || 0);
+
+      // Detectamos moneda igual que en el archivo contable: columna MONEDA / M_REG / TIPO_MONEDA.
+      // Si el archivo comercial no trae esa columna, asumimos PEN (comportamiento anterior).
+      const monedaRaw = String(r['MONEDA'] || r['M_REG'] || r['TIPO_MONEDA'] || 'S').trim().toUpperCase();
+      const esDolaresFila = (monedaRaw === 'D' || monedaRaw === 'USD' || monedaRaw === 'DOLARES');
       
       if (!resumenComercial[codFactura]) {
         resumenComercial[codFactura] = {
@@ -238,7 +267,8 @@ async function cargarFacturas(input){
           razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
           fecha_doc: fmtFecha(r['FECHA_DOC']),
           saldo: 0, 
-          mes: parseInt(r['MES']) || 0
+          mes: parseInt(r['MES']) || 0,
+          moneda: esDolaresFila ? 'USD' : 'PEN'
         };
       }
       // Sumamos si una factura tiene varias líneas (ej. varios productos)
@@ -554,7 +584,7 @@ async function cargarBancos(input){
   }
 
   document.getElementById('slot-bancos').classList.add('loaded');
-  document.getElementById('status-bancos').textContent = nuevos.length + ' ing. · ' + egresosRaw.length + ' egr.';
+  document.getElementById('status-bancos').textContent = nuevos.length + ' ing. · ' + egresosRaw.length + ' egr. (' + monedaBanco + ')';
 }
 async function cargarInter(input){
   const wb = await leerExcel(input.files[0]);
@@ -661,16 +691,29 @@ function extractNumFact(s){
 function sugerirFactura(pago, usadas){
   const desc=norm(pago.descripcion); const ref2=norm(pago.referencia2||''); const ord=norm(pago.ordenante||'');
   const monto=pago.monto;
-  const candsExactas=FACTURAS.filter(f=>f.saldo===monto&&!usadas.has(f.factura));
+  // Normalizamos la moneda del abono. Si no viene definida, asumimos PEN (comportamiento histórico).
+  const monedaPago = (pago.moneda==='USD') ? 'USD' : 'PEN';
+  const esBN = esAbonoDetraccionBN(pago);
+  // Universo de facturas restringido SIEMPRE a la misma moneda que el abono.
+  // Esto evita que un abono en USD se sugiera contra una factura en PEN (o al revés)
+  // solo porque el número coincide. Excepción: detracciones del Banco de la Nación
+  // (siempre PEN) contra facturas F201/F301 >S/700 marcadas erróneamente en USD.
+  const facturasMismaMoneda = FACTURAS.filter(f=>{
+    const mismaMoneda=((f.moneda==='USD')?'USD':'PEN')===monedaPago;
+    const excepcionDetraccion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
+    return mismaMoneda||excepcionDetraccion;
+  });
+
+  const candsExactas=facturasMismaMoneda.filter(f=>f.saldo===monto&&!usadas.has(f.factura));
 
   let m=(pago.referencia2||'').match(/F\d+-?0*(\d{4,})/i);
-  if(m){ const nd=m[1]; const f=candsExactas.find(x=>x.factura.includes(nd))||FACTURAS.find(x=>x.factura.includes(nd)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
+  if(m){ const nd=m[1]; const f=candsExactas.find(x=>x.factura.includes(nd))||facturasMismaMoneda.find(x=>x.factura.includes(nd)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
   const nd=extractNumFact(pago.descripcion);
-  if(nd){ const f=candsExactas.find(x=>x.factura.includes(nd))||FACTURAS.find(x=>x.factura.includes(nd)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en descripción',confianza:'alta'}; }
+  if(nd){ const f=candsExactas.find(x=>x.factura.includes(nd))||facturasMismaMoneda.find(x=>x.factura.includes(nd)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en descripción',confianza:'alta'}; }
   const nr=extractNumFact(pago.referencia2||'');
-  if(nr){ const f=candsExactas.find(x=>x.factura.includes(nr))||FACTURAS.find(x=>x.factura.includes(nr)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
+  if(nr){ const f=candsExactas.find(x=>x.factura.includes(nr))||facturasMismaMoneda.find(x=>x.factura.includes(nr)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
 
-  const candsNombre=FACTURAS.filter(f=>f.saldo<=monto&&!usadas.has(f.factura));
+  const candsNombre=facturasMismaMoneda.filter(f=>f.saldo<=monto&&!usadas.has(f.factura));
   const palabras=(desc+' '+ref2+' '+ord).split(' ').filter(w=>w.length>3);
   let best=null,bestScore=0;
   for(const f of candsNombre){ const rs=norm(f.razon_social); let score=0; for(const w of palabras) if(rs.includes(w)) score+=w.length; if(score>bestScore){bestScore=score;best=f;} }
@@ -721,7 +764,11 @@ async function eliminarAbono(id){
 
 function agregarLinea(id){ const p=PAGOS.find(x=>x.id===id); if(p){p.facturas.push({factura:'',razon:''});render();} }
 function quitarLinea(id,idx){ const p=PAGOS.find(x=>x.id===id); if(!p) return; if(p.facturas.length<=1){p.facturas=[{factura:'',razon:''}];}else{p.facturas.splice(idx,1);} p.estado=p.facturas.some(f=>f.factura)?'manual':'pendiente'; actualizarStats(); render(); }
-function cambiarLinea(id,idx,val){ const p=PAGOS.find(x=>x.id===id); if(!p) return; const f=FACTURAS.find(x=>x.factura===val); p.facturas[idx]={factura:val,razon:f?f.razon_social:''}; p.estado=val?'manual':'pendiente'; p.motivo='Asignación manual'; p.confianza=''; actualizarStats(); render(); }
+function cambiarLinea(id,idx,val){ const p=PAGOS.find(x=>x.id===id); if(!p) return; const f=FACTURAS.find(x=>x.factura===val); p.facturas[idx]={factura:val,razon:f?f.razon_social:''}; p.estado=val?'manual':'pendiente'; p.motivo='Asignación manual'; p.confianza=''; p.detraccionAceptada=false; actualizarStats(); render(); }
+// Checkbox manual (solo en memoria, no se guarda en Supabase) para aceptar que el monto de
+// una detracción del Banco de la Nación no coincida exacto con el saldo de la factura F201/F301
+// (diferencia normal por ser solo 10-12% del importe, más redondeo o tipo de cambio).
+function toggleDetraccionAceptada(id,checked){ const p=PAGOS.find(x=>x.id===id); if(!p) return; p.detraccionAceptada=checked; render(); }
 
 // ─── STATS ───────────────────────────────────────────────────────────────────
 function actualizarStats(){
@@ -748,12 +795,14 @@ function render(){
   migrarFacturas();
   const fil=document.getElementById('fil-estado').value;
   const filM=document.getElementById('fil-monto').value;
+  const filMon=document.getElementById('fil-moneda')?document.getElementById('fil-moneda').value:'todos';
   const busca=norm(document.getElementById('fil-busca').value);
   let lista=PAGOS.filter(p=>{
     if(fil==='pendiente'&&p.estado==='confirmado') return false;
     if(fil==='confirmado'&&p.estado!=='confirmado') return false;
     if(fil==='inter'&&!p.ordenante) return false;
     if(filM!=='todos'&&p.monto!==parseFloat(filM)) return false;
+    if(filMon!=='todos'&&((p.moneda==='USD')?'USD':'PEN')!==filMon) return false;
     if(busca){ const t=norm(p.descripcion+' '+p.operacion+' '+(p.facturas||[]).map(f=>f.factura+' '+f.razon).join(' ')+' '+(p.ordenante||'')); if(!t.includes(busca)) return false; }
     return true;
   });
@@ -775,19 +824,43 @@ function render(){
     const motivoSeguro = p.motivo && p.estado !== 'confirmado' ? `<div class="reason">→ ${escaparHTML(p.motivo)}</div>` : '';
 
     const hayAsig=(p.facturas||[]).some(f=>f.factura);
-    const btnConf=p.estado!=='confirmado'&&hayAsig?`<button class="btn btn-confirm" onclick="confirmar(${p.id})">✓ Confirmar</button>`:'';
     const btnQuit=hayAsig?`<button class="btn btn-remove" onclick="quitar(${p.id})">✕ Quitar</button>`:'';
     const btnDel=`<button class="btn btn-remove" onclick="eliminarAbono(${p.id})" title="Eliminar abono permanentemente" style="margin-left:auto">🗑 Eliminar</button>`;
 
+    const monedaPagoActual = (p.moneda==='USD') ? 'USD' : 'PEN';
+    const esBN = esAbonoDetraccionBN(p);
     const lineas=(p.facturas||[{factura:'',razon:''}]).map((item,idx)=>{
       const usadasAqui=new Set([...usadasOtros,...(p.facturas||[]).filter((_,i)=>i!==idx).map(f=>f.factura).filter(Boolean)]);
-      const opts=FACTURAS.filter(f=>!usadasAqui.has(f.factura)||f.factura===item.factura).sort((a,b)=>a.razon_social.localeCompare(b.razon_social,'es')).map(f=>{
+      // Solo mostramos facturas de la MISMA moneda que el abono, para no permitir
+      // conciliar por error un abono en dólares contra una factura en soles (o al revés).
+      // EXCEPCIÓN: un abono de detracción del Banco de la Nación (siempre PEN) sí puede
+      // aplicarse contra una factura F201/F301 >S/700 aunque esté marcada en USD, porque
+      // ese banco nunca acepta detracciones en dólares — lo más probable es un dato mal
+      // registrado. Se muestra marcada con ⚠ para que Antonio decida.
+      const opts=FACTURAS.filter(f=>{
+        const mismaMoneda=((f.moneda==='USD')?'USD':'PEN')===monedaPagoActual;
+        const excepcionDetraccion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
+        return mismaMoneda||excepcionDetraccion;
+      })
+        .filter(f=>!usadasAqui.has(f.factura)||f.factura===item.factura)
+        .sort((a,b)=>a.razon_social.localeCompare(b.razon_social,'es')).map(f=>{
         const sel=item.factura===f.factura?'selected':'';
-        return `<option value="${escaparHTML(f.factura)}" ${sel}>${escaparHTML(f.factura)} — S/ ${f.saldo.toLocaleString('es-PE')} — ${escaparHTML(f.razon_social).substring(0,35)}</option>`;
+        const esExcepcion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
+        const esDetraccionNormal=!esExcepcion && requiereDetraccionPEN(f);
+        const marca=esExcepcion?'⚠ USD→revisar — ':(esDetraccionNormal?'🧾 Detracc. — ':'');
+        return `<option value="${escaparHTML(f.factura)}" ${sel}>${marca}${escaparHTML(f.factura)} — ${fmtMonto(f.saldo,f.moneda)} — ${escaparHTML(f.razon_social).substring(0,35)}</option>`;
       }).join('');
       const btnQL=(p.facturas||[]).length>1||item.factura?`<button class="btn btn-remove" onclick="quitarLinea(${p.id},${idx})">✕</button>`:'';
       return `<div class="factura-row"><select class="factura-select" onchange="cambiarLinea(${p.id},${idx},this.value)"><option value="">— Seleccionar factura —</option>${opts}</select>${btnQL}</div>`;
     }).join('');
+
+    const facturaElegida = (p.facturas||[]).map(item=>FACTURAS.find(f=>f.factura===item.factura)).find(Boolean);
+    const necesitaAceptar = esBN && facturaElegida && requiereDetraccionPEN(facturaElegida) && parseFloat(p.monto)!==parseFloat(facturaElegida.saldo);
+    const checkDetraccion = necesitaAceptar ? `<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--amber-text);background:var(--amber-dim);border-radius:6px;padding:6px 10px;width:100%;margin-top:6px">
+        <input type="checkbox" ${p.detraccionAceptada?'checked':''} onchange="toggleDetraccionAceptada(${p.id},this.checked)">
+        🧾 El monto no coincide con el saldo total — es normal en detracción (10-12% + redondeo/TC). Marcar para habilitar "Confirmar".
+      </label>` : '';
+    const btnConf=p.estado!=='confirmado'&&hayAsig&&!(necesitaAceptar&&!p.detraccionAceptada)?`<button class="btn btn-confirm" onclick="confirmar(${p.id})">✓ Confirmar</button>`:(p.estado!=='confirmado'&&hayAsig?`<button class="btn" disabled title="Marca el check de detracción para habilitar" style="opacity:.5;cursor:not-allowed">✓ Confirmar</button>`:'');
 
     return `<div class="card ${cCard}">
       <div class="card-top">
@@ -797,11 +870,12 @@ function render(){
           <div class="meta">${p.fecha||''} · OP ${escaparHTML(String(p.operacion))}${ref2Segura}</div>
         </div>
         <div style="text-align:right">
-          <div class="monto">${fmtMonto(p.monto)}</div>
+          <div class="monto">${fmtMonto(p.monto,p.moneda)}${monedaPagoActual==='USD'?' <span class="badge" style="background:var(--purple-dim);color:var(--purple-text)">USD</span>':''}</div>
           <span class="badge ${bClass}">${bLabel}</span>
         </div>
       </div>
       ${lineas}
+      ${checkDetraccion}
       <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;width:100%">
         <button class="btn" onclick="agregarLinea(${p.id})" style="color:var(--text3);border-style:dashed;font-size:11px">+ agregar factura</button>
         ${btnConf}${btnQuit}${btnDel}
@@ -828,11 +902,14 @@ function renderFacturas(){
 
   const vencidas=FACTURAS.filter(f=>{ const d=diasHasta(f.fecha_ven); return d!==null&&d<0; }).length;
   const proximas=FACTURAS.filter(f=>{ const d=diasHasta(f.fecha_ven); return d!==null&&d>=0&&d<=7; }).length;
-  const saldoTotal=FACTURAS.reduce((a,f)=>a+(f.saldo||0),0);
+  // IMPORTANTE: nunca sumamos soles y dólares en un mismo total (eso falsea la cifra).
+  // Mostramos el saldo separado por moneda.
+  const saldoPEN=FACTURAS.filter(f=>f.moneda!=='USD').reduce((a,f)=>a+(f.saldo||0),0);
+  const saldoUSD=FACTURAS.filter(f=>f.moneda==='USD').reduce((a,f)=>a+(f.saldo||0),0);
   document.getElementById('f-total').textContent=FACTURAS.length;
   document.getElementById('f-venc').textContent=vencidas;
   document.getElementById('f-prox').textContent=proximas;
-  document.getElementById('f-saldo').textContent=fmtMonto(saldoTotal);
+  document.getElementById('f-saldo').textContent=saldoUSD>0 ? fmtMonto(saldoPEN,'PEN')+' · '+fmtMonto(saldoUSD,'USD') : fmtMonto(saldoPEN,'PEN');
 
   if(!lista.length){ document.getElementById('fact-list').innerHTML='<div class="empty"><span class="empty-icon">🧾</span>Sin facturas que mostrar</div>'; return; }
 
@@ -866,17 +943,17 @@ function renderFacturas(){
         <div style="font-size:11px;color:var(--text3)">F. Emisión: ${f.fecha_doc||''}</div>
         <div style="font-size:11px;${diasColor}">${diasLabel}</div>
       </div>
-      <div class="fact-saldo" style="margin-left:15px;">${fmtMonto(f.saldo)}</div>
+      <div class="fact-saldo" style="margin-left:15px;">${fmtMonto(f.saldo,f.moneda)}</div>
     </div>`;
   }).join('');
 }
 // ─── EXPORTAR ────────────────────────────────────────────────────────────────
 function exportarCSV(){
   migrarFacturas();
-  const rows=[['Fecha','Descripcion','Ordenante','Monto Abono','Operacion - Numero','Factura_Cancelada','Empresa','Importe Factura','Saldo por Asignar','Estado']];
+  const rows=[['Fecha','Descripcion','Ordenante','Moneda','Monto Abono','Operacion - Numero','Factura_Cancelada','Empresa','Importe Factura','Saldo por Asignar','Estado']];
   PAGOS.forEach(p=>{
     const facts=(p.facturas||[]).filter(f=>f.factura);
-    const base=[p.fecha,p.descripcion,p.ordenante||'',p.monto,p.operacion];
+    const base=[p.fecha,p.descripcion,p.ordenante||'',(p.moneda==='USD'?'USD':'PEN'),p.monto,p.operacion];
     if(!facts.length){ rows.push([...base,'','','',p.monto,p.estado]); }
     else{
       const sumF=facts.reduce((a,f)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; return a+(fd.saldo||0); },0);
@@ -968,13 +1045,14 @@ function poblarFiltroCategorias(){
 function actualizarStatsEgresos(){
   const conf = EGRESOS.filter(e=>e.estado==='confirmado').length;
   const pend = EGRESOS.filter(e=>e.estado==='pendiente').length;
-  const total = EGRESOS.reduce((a,e)=>a+(parseFloat(e.monto)||0),0);
+  const totalPEN = EGRESOS.filter(e=>e.moneda!=='USD').reduce((a,e)=>a+(parseFloat(e.monto)||0),0);
+  const totalUSD = EGRESOS.filter(e=>e.moneda==='USD').reduce((a,e)=>a+(parseFloat(e.monto)||0),0);
   const pct = EGRESOS.length ? Math.round(conf/EGRESOS.length*100) : 0;
   const el = id => document.getElementById(id);
   if(el('eg-total')) el('eg-total').textContent = EGRESOS.length;
   if(el('eg-conf')) el('eg-conf').textContent = conf;
   if(el('eg-pend')) el('eg-pend').textContent = pend;
-  if(el('eg-monto')) el('eg-monto').textContent = fmtMonto(total);
+  if(el('eg-monto')) el('eg-monto').textContent = totalUSD>0 ? fmtMonto(totalPEN,'PEN')+' · '+fmtMonto(totalUSD,'USD') : fmtMonto(totalPEN,'PEN');
   if(el('prog-eg')) el('prog-eg').style.width = pct+'%';
 }
 
@@ -1033,7 +1111,7 @@ function renderEgresos(){
           <div class="meta">${e.fecha||''} · OP ${escaparHTML(String(e.operacion))}${ref2show}</div>
         </div>
         <div style="text-align:right">
-          <div class="monto" style="color:var(--red)">-${fmtMonto(e.monto)}</div>
+          <div class="monto" style="color:var(--red)">-${fmtMonto(e.monto,e.moneda)}</div>
           <span class="badge ${bClass}">${bLabel}</span>
         </div>
       </div>
@@ -1355,10 +1433,12 @@ function renderReportes() {
     const dias = diasHasta(f.fecha_ven);
     if (f.saldo > 0 && dias !== null && dias < 0) {
       if (!deudasPorCliente[f.razon_social]) {
-        deudasPorCliente[f.razon_social] = { cantidad: 0, totalSaldo: 0 };
+        deudasPorCliente[f.razon_social] = { cantidad: 0, totalSaldoPEN: 0, totalSaldoUSD: 0 };
       }
       deudasPorCliente[f.razon_social].cantidad++;
-      deudasPorCliente[f.razon_social].totalSaldo += parseFloat(f.saldo || 0);
+      // Separamos por moneda para no sumar soles con dólares en el total mostrado
+      if (f.moneda === 'USD') deudasPorCliente[f.razon_social].totalSaldoUSD += parseFloat(f.saldo || 0);
+      else deudasPorCliente[f.razon_social].totalSaldoPEN += parseFloat(f.saldo || 0);
     }
   });
 
@@ -1384,72 +1464,104 @@ function renderReportes() {
             <tr style="border-bottom:1px solid var(--border2);">
               <td style="padding:8px 4px; font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escaparHTML(a.razon_social)}</td>
               <td style="padding:8px 4px; text-align:center;"><span style="background:#ffe6e6; color:#e3000f; padding:2px 8px; border-radius:10px; font-weight:bold;">${a.cantidad} cuotas</span></td>
-              <td style="padding:8px 4px; text-align:right; font-weight:600; color:#e3000f;">${fmtMonto(a.totalSaldo)}</td>
+              <td style="padding:8px 4px; text-align:right; font-weight:600; color:#e3000f;">${a.totalSaldoUSD>0?fmtMonto(a.totalSaldoPEN,'PEN')+' · '+fmtMonto(a.totalSaldoUSD,'USD'):fmtMonto(a.totalSaldoPEN,'PEN')}</td>
             </tr>
           `).join('')}
         </tbody>
       </table>`;
   document.getElementById('reporte-alertas').innerHTML = htmlAlertas;
 
+  // 1b. ALERTA: facturas F201/F301 >S/700 registradas en USD (posible dato mal cargado,
+  // ya que Banco de la Nación nunca acepta la detracción en dólares).
+  const inconsistentes = FACTURAS.filter(f=>f.moneda==='USD' && requiereDetraccionPEN(f));
+  const htmlIncons = inconsistentes.length === 0
+    ? '<div class="empty" style="padding:20px 0;"><span class="empty-icon">✅</span>No se encontraron inconsistencias</div>'
+    : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr style="border-bottom:2px solid var(--amber); text-align:left; color:var(--text2);">
+            <th style="padding:8px 4px;">Factura</th>
+            <th style="padding:8px 4px;">Empresa</th>
+            <th style="padding:8px 4px; text-align:right;">Importe (USD)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${inconsistentes.map(f=>`
+            <tr style="border-bottom:1px solid var(--border2);">
+              <td style="padding:8px 4px; font-weight:600;">${escaparHTML(f.factura)}</td>
+              <td style="padding:8px 4px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escaparHTML(f.razon_social)}</td>
+              <td style="padding:8px 4px; text-align:right; font-weight:600; color:var(--amber-text);">${fmtMonto(f.saldo,'USD')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`;
+  document.getElementById('reporte-detraccion-moneda').innerHTML = htmlIncons;
+
 
   // 2. LÓGICA: REPORTE DE INGRESOS POR RUBRO (SEGÚN GLOSA BANCARIA)
-  const rubros = {
-    'Cuotas Institucionales / Membresías': 0,
-    'Certificaciones y Constancias': 0,
-    'Capacitaciones, Cursos y Eventos': 0,
-    'Otros Ingresos por Identificar': 0
-  };
-
-  let totalRecaudadoGlobal = 0;
+  // Cada rubro guarda su monto en PEN y en USD por separado: sumar soles con dólares
+  // en una sola cifra falsea el total, así que se calculan y muestran de forma independiente.
+  function rubrosVacios(){
+    return {
+      'Cuotas Institucionales / Membresías': {PEN:0,USD:0},
+      'Certificaciones y Constancias': {PEN:0,USD:0},
+      'Capacitaciones, Cursos y Eventos': {PEN:0,USD:0},
+      'Otros Ingresos por Identificar': {PEN:0,USD:0}
+    };
+  }
+  const rubros = rubrosVacios();
+  let totalPEN = 0, totalUSD = 0;
 
   // Clasificamos los abonos que ya se encuentran en estado 'confirmado'
   PAGOS.forEach(p => {
     if (p.estado === 'confirmado' && p.monto > 0) {
       const glosa = (p.descripcion || '').toUpperCase();
-      totalRecaudadoGlobal += parseFloat(p.monto);
+      const mon = p.moneda === 'USD' ? 'USD' : 'PEN';
+      const monto = parseFloat(p.monto);
+      if (mon === 'USD') totalUSD += monto; else totalPEN += monto;
 
-      if (glosa.includes('CUOTA') || glosa.includes('MEMBRE') || glosa.includes('APORTE') || glosa.includes('ASOC')) {
-        rubros['Cuotas Institucionales / Membresías'] += parseFloat(p.monto);
-      } else if (glosa.includes('CERTIF') || glosa.includes('CONSTANC') || glosa.includes('DERECHO') || glosa.includes('TASA')) {
-        rubros['Certificaciones y Constancias'] += parseFloat(p.monto);
-      } else if (glosa.includes('CURSO') || glosa.includes('CAPACIT') || glosa.includes('SEMINARIO') || glosa.includes('FORO') || glosa.includes('CONGRE')) {
-        rubros['Capacitaciones, Cursos y Eventos'] += parseFloat(p.monto);
-      } else {
-        rubros['Otros Ingresos por Identificar'] += parseFloat(p.monto);
-      }
+      let key;
+      if (glosa.includes('CUOTA') || glosa.includes('MEMBRE') || glosa.includes('APORTE') || glosa.includes('ASOC')) key = 'Cuotas Institucionales / Membresías';
+      else if (glosa.includes('CERTIF') || glosa.includes('CONSTANC') || glosa.includes('DERECHO') || glosa.includes('TASA')) key = 'Certificaciones y Constancias';
+      else if (glosa.includes('CURSO') || glosa.includes('CAPACIT') || glosa.includes('SEMINARIO') || glosa.includes('FORO') || glosa.includes('CONGRE')) key = 'Capacitaciones, Cursos y Eventos';
+      else key = 'Otros Ingresos por Identificar';
+      rubros[key][mon] += monto;
     }
   });
 
-  // Dibujamos la tabla de ingresos por rubros con su porcentaje de impacto
-  const htmlRubros = totalRecaudadoGlobal === 0
-    ? '<div class="empty" style="padding:20px 0;"><span class="empty-icon">🪙</span>No hay ingresos conciliados en este período</div>'
-    : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+  function tablaRubros(moneda, total){
+    if (total === 0) return '';
+    return `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-bottom:14px;">
         <thead>
           <tr style="border-bottom:2px solid var(--green); text-align:left; color:var(--text2);">
-            <th style="padding:8px 4px;">Línea de Ingreso / Rubro</th>
+            <th style="padding:8px 4px;">Línea de Ingreso / Rubro ${moneda==='USD'?'(US$)':'(S/)'}</th>
             <th style="padding:8px 4px; text-align:center;">Participación</th>
             <th style="padding:8px 4px; text-align:right;">Monto Recaudado</th>
           </tr>
         </thead>
         <tbody>
           ${Object.keys(rubros).map(key => {
-            const montoRubro = rubros[key];
-            const porcentaje = totalRecaudadoGlobal > 0 ? Math.round((montoRubro / totalRecaudadoGlobal) * 100) : 0;
+            const montoRubro = rubros[key][moneda];
+            const porcentaje = total > 0 ? Math.round((montoRubro / total) * 100) : 0;
             return `
               <tr style="border-bottom:1px solid var(--border2);">
                 <td style="padding:8px 4px; font-weight:500;">${key}</td>
                 <td style="padding:8px 4px; text-align:center; color:var(--text3);">${porcentaje}%</td>
-                <td style="padding:8px 4px; text-align:right; font-weight:600; color:#10b981;">${fmtMonto(montoRubro)}</td>
+                <td style="padding:8px 4px; text-align:right; font-weight:600; color:#10b981;">${fmtMonto(montoRubro,moneda)}</td>
               </tr>
             `;
           }).join('')}
           <tr style="background:var(--bg3); font-weight:bold; border-top:2px solid var(--border);">
             <td style="padding:10px 4px;">TOTAL RECAUDADO MONITOREADO</td>
             <td style="padding:10px 4px; text-align:center;">100%</td>
-            <td style="padding:10px 4px; text-align:right; color:var(--text);">${fmtMonto(totalRecaudadoGlobal)}</td>
+            <td style="padding:10px 4px; text-align:right; color:var(--text);">${fmtMonto(total,moneda)}</td>
           </tr>
         </tbody>
       </table>`;
+  }
+
+  const htmlRubros = (totalPEN === 0 && totalUSD === 0)
+    ? '<div class="empty" style="padding:20px 0;"><span class="empty-icon">🪙</span>No hay ingresos conciliados en este período</div>'
+    : tablaRubros('PEN', totalPEN) + tablaRubros('USD', totalUSD);
   document.getElementById('reporte-rubros').innerHTML = htmlRubros;
 }
 // Funcionalidad para ocultar y mostrar el panel lateral
