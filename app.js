@@ -60,13 +60,8 @@ function fmtMonto(n, moneda){
   const simbolo = (moneda==='USD') ? 'US$ ' : 'S/ ';
   return simbolo+parseFloat(n||0).toLocaleString('es-PE',{minimumFractionDigits:2});
 }
-// Reglas de detracción SUNAT: facturas serie F201/F301 con importe > S/700 (o su equivalente
-// en USD, ~US$212) llevan detracción obligatoria, la cual el Banco de la Nación SOLO acepta
-// en soles (nunca en dólares), aunque la factura se haya emitido en dólares.
-// No sucede siempre (no todas las F201/F301 sobre ese monto tienen detracción registrada),
-// así que esto NUNCA se usa para bloquear ni para asumir automáticamente que ya está pagada;
-// solo para marcar la posibilidad y dejar que la conciliación sea 100% manual, como siempre.
-// No se persiste nada nuevo en Supabase: todo se calcula al vuelo en el navegador.
+
+// Reglas de detracción SUNAT
 const UMBRAL_DETRACCION_PEN = 700;
 const UMBRAL_DETRACCION_USD = 212;
 function esSerieDetraccion(numFactura){
@@ -76,7 +71,8 @@ function esSerieDetraccion(numFactura){
 function requiereDetraccionPEN(f){
   if(!esSerieDetraccion(f.factura)) return false;
   const umbral = (f.moneda==='USD') ? UMBRAL_DETRACCION_USD : UMBRAL_DETRACCION_PEN;
-  return parseFloat(f.saldo||0) > umbral;
+  const saldoBase = f.saldo_original !== undefined ? f.saldo_original : parseFloat(f.saldo||0);
+  return saldoBase > umbral;
 }
 function esAbonoDetraccionBN(p){
   return /^DETRACCION BN/i.test(p.descripcion||'');
@@ -84,18 +80,12 @@ function esAbonoDetraccionBN(p){
 function diasHasta(fecha){
   if(!fecha) return null;
   const hoy = new Date(); hoy.setHours(0,0,0,0);
-  
-  // Limpiamos el texto para quedarnos solo con la fecha, ignorando horas si las hay
   let str = String(fecha).trim().split(' ')[0].split('T')[0];
-  
   let f;
-  
-  // Caso 1: Formato Latino (DD/MM/AAAA o DD-MM-AAAA)
   const mLatino = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
   if(mLatino) {
     f = new Date(parseInt(mLatino[3]), parseInt(mLatino[2]) - 1, parseInt(mLatino[1]));
   } else {
-    // Caso 2: Formato Base de Datos (AAAA-MM-DD o AAAA/MM/DD)
     const mISO = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
     if(mISO) {
       f = new Date(parseInt(mISO[1]), parseInt(mISO[2]) - 1, parseInt(mISO[3]));
@@ -103,13 +93,39 @@ function diasHasta(fecha){
       f = new Date(str);
     }
   }
-  
-  // Si no se pudo parsear correctamente, evitamos romper el flujo
   if(!f || isNaN(f.getTime())) return null;
   f.setHours(0,0,0,0);
-  
-  return Math.round((f - hoy) / 86400000); // Retorna los días de diferencia exactos
+  return Math.round((f - hoy) / 86400000); 
 }
+
+// ─── NUEVO MOTOR DE SALDOS DINÁMICOS ─────────────────────────────────────────
+function recalcularSaldos() {
+  // 1. Restauramos todas las facturas a su saldo original
+  FACTURAS.forEach(f => {
+    if (f.saldo_original === undefined) f.saldo_original = parseFloat(f.saldo) || 0;
+    f.saldo = f.saldo_original;
+  });
+  
+  // 2. Restamos matemáticamente todos los cobros asignados
+  PAGOS.forEach(p => {
+    if ((p.estado === 'confirmado' || p.estado === 'manual' || p.estado === 'sugerida') && p.facturas) {
+      let disponible = parseFloat(p.monto) || 0;
+      p.facturas.forEach(linea => {
+        if (!linea.factura) return;
+        const f = FACTURAS.find(x => x.factura === linea.factura);
+        if (f && disponible > 0) {
+          const cobro = Math.min(disponible, f.saldo);
+          f.saldo -= cobro;
+          disponible -= cobro;
+        }
+      });
+    }
+  });
+
+  // 3. Redondeo técnico para evitar decimales infinitos
+  FACTURAS.forEach(f => { f.saldo = Math.round(f.saldo * 100) / 100; });
+}
+
 // ─── NAVEGACIÓN ──────────────────────────────────────────────────────────────
 function showPage(page, el){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -119,7 +135,6 @@ function showPage(page, el){
   if(el) el.classList.add('active');
   else if(event&&event.currentTarget) event.currentTarget.classList.add('active');
   
-  // Agregamos 'reportes' a la lista de títulos
   const titles = {
     conciliacion:'Conciliación bancaria',
     facturas:'Facturas pendientes',
@@ -132,10 +147,11 @@ function showPage(page, el){
   if(page==='facturas') renderFacturas();
   if(page==='egresos') renderEgresos();
   if(page==='categorias') renderCategorias();
-  if(page==='reportes') renderReportes(); // <-- NUEVA ORDEN
+  if(page==='reportes') renderReportes(); 
 }
 function showUpload(){ document.getElementById('modal-upload').classList.add('show'); }
 function hideUpload(){ document.getElementById('modal-upload').classList.remove('show'); }
+
 // ─── CONEXIÓN BD ─────────────────────────────────────────────────────────────
 async function init(){
   try{
@@ -154,6 +170,9 @@ async function init(){
 async function cargarDesdeBD(){
   const {data:fdata} = await db.from('facturas').select('*').order('fecha_doc');
   FACTURAS = fdata||[];
+  
+  // Guardamos el saldo original ni bien llegan de la BD
+  FACTURAS.forEach(f => { f.saldo_original = parseFloat(f.saldo) || 0; });
 
   const {data:bdata} = await db.from('abonos').select('*').order('fecha');
   const abonos = bdata||[];
@@ -173,11 +192,17 @@ async function cargarDesdeBD(){
     confianza: ''
   }));
 
-  const usadas = new Set(PAGOS.filter(p=>p.estado==='confirmado').flatMap(p=>p.facturas.map(f=>f.factura)).filter(Boolean));
+  // Disparamos el primer cálculo de saldos antes de las sugerencias
+  recalcularSaldos();
+
   PAGOS.forEach(p=>{
     if(p.estado==='pendiente'){
-      const sug=sugerirFactura(p,usadas);
-      if(sug){ p.facturas=[{factura:sug.factura,razon:sug.razon}]; p.motivo=sug.motivo; p.confianza=sug.confianza; p.estado='sugerida'; usadas.add(sug.factura); }
+      const sug=sugerirFactura(p);
+      if(sug){ 
+        p.facturas=[{factura:sug.factura,razon:sug.razon}]; 
+        p.motivo=sug.motivo; p.confianza=sug.confianza; p.estado='sugerida'; 
+        recalcularSaldos(); // Recalculamos para que el saldo sugerido no se repita
+      }
     }
   });
 
@@ -191,17 +216,12 @@ async function cargarDesdeBD(){
 // ─── CARGA DE ARCHIVOS ───────────────────────────────────────────────────────
 async function cargarFacturas(input){
   if (!input.files || input.files.length === 0) return;
-  
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
   
-  if (!rows.length) {
-    alert('El archivo seleccionado está vacío.');
-    return;
-  }
+  if (!rows.length) { alert('El archivo seleccionado está vacío.'); return; }
   
-  // 1. RADAR AUTOMÁTICO DE ARCHIVO
   const headers = Object.keys(rows[0]);
   const esContable = headers.includes('SALDO_S') && headers.includes('SERIE') && headers.includes('NUMERO');
   const esComercial = headers.includes('SERIE_DOC') && headers.includes('NUMERO_DOC');
@@ -215,81 +235,55 @@ async function cargarFacturas(input){
   let nuevas = [];
   
   if (esContable) {
-    // --- LÓGICA ARCHIVO CONTABLE (Tabla Dinámica / Saldos Netos) ---
     const resumenContable = {};
-    
     rows.forEach(r => {
       const codFactura = limpiarDocNum(r['SERIE'], r['NUMERO']);
       if (!codFactura) return;
-      
       const monedaDoc = String(r['M_REG'] || 'S').trim().toUpperCase();
       const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
       const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
       
       if (!resumenContable[codFactura] || saldoFila < resumenContable[codFactura].saldo) {
         resumenContable[codFactura] = {
-          factura: codFactura,
-          razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-          fecha_doc: fmtFecha(r['FECHA_DOC']),
-          fecha_ven: fmtFecha(r['FECHA_VEN']),
-          saldo: saldoFila,
-          mes: parseInt(r['MES']) || 0,
-          moneda: esDolares ? 'USD' : 'PEN'
+          factura: codFactura, razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
+          fecha_doc: fmtFecha(r['FECHA_DOC']), fecha_ven: fmtFecha(r['FECHA_VEN']),
+          saldo: saldoFila, mes: parseInt(r['MES']) || 0, moneda: esDolares ? 'USD' : 'PEN'
         };
       }
     });
-    
     nuevas = Object.values(resumenContable).filter(f => f.saldo > 0);
-    
     const { error } = await db.from('facturas').upsert(nuevas, { onConflict: 'factura' });
     if (error) { toast('Error BD: ' + error.message, ''); return; }
-    
     toast(nuevas.length + ' facturas procesadas (Archivo Contable)', 'green');
     
   } else if (esComercial) {
-    // --- LÓGICA ARCHIVO COMERCIAL (Suma de ítems) ---
     const resumenComercial = {};
-    
     rows.forEach(r => {
       const codFactura = limpiarDocNum(r['SERIE_DOC'], r['NUMERO_DOC']);
       if (!codFactura) return;
-      
       const totalFila = parseFloat(r['TOTAL'] || 0);
-
-      // Detectamos moneda igual que en el archivo contable: columna MONEDA / M_REG / TIPO_MONEDA.
-      // Si el archivo comercial no trae esa columna, asumimos PEN (comportamiento anterior).
       const monedaRaw = String(r['MONEDA'] || r['M_REG'] || r['TIPO_MONEDA'] || 'S').trim().toUpperCase();
       const esDolaresFila = (monedaRaw === 'D' || monedaRaw === 'USD' || monedaRaw === 'DOLARES');
       
       if (!resumenComercial[codFactura]) {
         resumenComercial[codFactura] = {
-          factura: codFactura,
-          razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-          fecha_doc: fmtFecha(r['FECHA_DOC']),
-          saldo: 0, 
-          mes: parseInt(r['MES']) || 0,
-          moneda: esDolaresFila ? 'USD' : 'PEN'
+          factura: codFactura, razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
+          fecha_doc: fmtFecha(r['FECHA_DOC']), saldo: 0, mes: parseInt(r['MES']) || 0, moneda: esDolaresFila ? 'USD' : 'PEN'
         };
       }
-      // Sumamos si una factura tiene varias líneas (ej. varios productos)
       resumenComercial[codFactura].saldo += totalFila;
     });
-    
     nuevas = Object.values(resumenComercial).filter(f => f.saldo > 0);
-    
     const { error } = await db.from('facturas').upsert(nuevas, { onConflict: 'factura' });
     if (error) { toast('Error BD: ' + error.message, ''); return; }
-    
     toast(nuevas.length + ' facturas procesadas (Archivo Comercial)', 'green');
     
   } else {
-    alert('Archivo no reconocido. Asegúrate de subir el reporte contable o comercial original.');
-    return;
+    alert('Archivo no reconocido.'); return;
   }
-  
-  // Actualizamos la vista
   await cargarDesdeBD();
 }
+
 async function cargarBancos(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -297,145 +291,53 @@ async function cargarBancos(input){
 
   if (!rawData.length) { alert('El archivo está vacío.'); return; }
 
-  // 1. ESCÁNER TIPO DE BANCO Y MONEDA
-  let esDolares = false;
-  let esNacion = false;
-  let esInterbank = false;
-  let esScotiabank = false;
-  let esBbva = false;
-  let headerIdx = -1;
-  let monedaBanco = 'PEN';
+  let esDolares = false, esNacion = false, esInterbank = false, esScotiabank = false, esBbva = false;
+  let headerIdx = -1, monedaBanco = 'PEN';
 
   for(let i = 0; i < Math.min(rawData.length, 25); i++){
     const filaTexto = rawData[i].join(' ').toUpperCase();
-    
-    // Detector global de dólares
-    if(filaTexto.includes('DÓLARES') || filaTexto.includes('DOLARES') || filaTexto.includes('USD') || filaTexto.includes('US$') || filaTexto.includes('CCME') || filaTexto.includes('IMPORTES EN: USD')) {
-      esDolares = true;
-      monedaBanco = 'USD';
-    }
-
-    // Radar Banco de la Nación
-    if(filaTexto.includes('CARGO') && filaTexto.includes('ABONO') && filaTexto.includes('RUC') && filaTexto.includes('OFICINA') && !filaTexto.includes('F. OPERACIÓN')) {
-      esNacion = true;
-      headerIdx = i;
-      break;
-    }
-    // Radar Interbank
-    if(filaTexto.includes('FECHA DE OPERACIÓN') && filaTexto.includes('NRO. DE OPERACIÓN') && filaTexto.includes('CARGO') && filaTexto.includes('ABONO')) {
-      esInterbank = true;
-      headerIdx = i;
-      break;
-    }
-    // Radar Scotiabank
-    if(filaTexto.includes('FECHA') && filaTexto.includes('MOVIMIENTO') && filaTexto.includes('IMPORTE') && filaTexto.includes('REFERENCIA') && filaTexto.includes('CDR')) {
-      esScotiabank = true;
-      headerIdx = i;
-      break;
-    }
-    // Radar BBVA
-    if(filaTexto.includes('F. OPERACIÓN') && filaTexto.includes('CONCEPTO') && filaTexto.includes('IMPORTE') && filaTexto.includes('OFICINA')) {
-      esBbva = true;
-      headerIdx = i;
-      break;
-    }
-    // Radar BCP (Se ejecuta si no es ninguno de los anteriores)
-    if((filaTexto.includes('MONTO') || filaTexto.includes('IMPORTE')) && filaTexto.includes('OPERACI') && !esBbva && !esInterbank) {
-      headerIdx = i;
-      break;
-    }
+    if(filaTexto.includes('DÓLARES') || filaTexto.includes('DOLARES') || filaTexto.includes('USD') || filaTexto.includes('US$') || filaTexto.includes('CCME') || filaTexto.includes('IMPORTES EN: USD')) { esDolares = true; monedaBanco = 'USD'; }
+    if(filaTexto.includes('CARGO') && filaTexto.includes('ABONO') && filaTexto.includes('RUC') && filaTexto.includes('OFICINA') && !filaTexto.includes('F. OPERACIÓN')) { esNacion = true; headerIdx = i; break; }
+    if(filaTexto.includes('FECHA DE OPERACIÓN') && filaTexto.includes('NRO. DE OPERACIÓN') && filaTexto.includes('CARGO') && filaTexto.includes('ABONO')) { esInterbank = true; headerIdx = i; break; }
+    if(filaTexto.includes('FECHA') && filaTexto.includes('MOVIMIENTO') && filaTexto.includes('IMPORTE') && filaTexto.includes('REFERENCIA') && filaTexto.includes('CDR')) { esScotiabank = true; headerIdx = i; break; }
+    if(filaTexto.includes('F. OPERACIÓN') && filaTexto.includes('CONCEPTO') && filaTexto.includes('IMPORTE') && filaTexto.includes('OFICINA')) { esBbva = true; headerIdx = i; break; }
+    if((filaTexto.includes('MONTO') || filaTexto.includes('IMPORTE')) && filaTexto.includes('OPERACI') && !esBbva && !esInterbank) { headerIdx = i; break; }
   }
 
-  if(headerIdx === -1) {
-    alert('No se detectaron las cabeceras del banco. Asegúrate de subir el archivo original de tu entidad.');
-    return;
-  }
+  if(headerIdx === -1) { alert('No se detectaron las cabeceras del banco.'); return; }
 
-  const nuevos = [];
-  const egresosRaw = [];
+  const nuevos = []; const egresosRaw = [];
+  function limpiarMonto(texto) { let limpio = String(texto || '').replace(/[S\/\$\s,]/g, '').trim(); return parseFloat(limpio) || 0; }
 
-  function limpiarMonto(texto) {
-    let limpio = String(texto || '').replace(/[S\/\$\s,]/g, '').trim();
-    return parseFloat(limpio) || 0;
-  }
-
-  // 2. PROCESAMIENTO SEGÚN EL BANCO
   if(esBbva) {
-    // --- LÓGICA BBVA ---
     const headers = rawData[headerIdx].map(h => String(h).trim().toUpperCase());
     const colFecha = headers.findIndex(h => h.includes('F. OPERACI'));
     const colDoc = headers.findIndex(h => h.includes('Nº. DOC') || h.includes('N. DOC') || h.includes('NRO. DOC') || h.includes('DOC.'));
     const colConcepto = headers.findIndex(h => h.includes('CONCEPTO'));
     const colImporte = headers.findIndex(h => h === 'IMPORTE');
-
     for(let i = headerIdx + 1; i < rawData.length; i++) {
-      const r = rawData[i];
-      if(!r || r.length === 0) continue;
-
+      const r = rawData[i]; if(!r || r.length === 0) continue;
       let fechaVal = String(r[colFecha] || '').trim();
-      
-      // Filtro para ignorar las filas trampa de saldos y filas vacías
       if(!fechaVal || fechaVal.toUpperCase().includes('SALDO')) continue;
-
-      const montoVal = limpiarMonto(r[colImporte]);
-      if(montoVal === 0) continue;
-
-      let opVal = String(r[colDoc] || '').trim();
-      if(!opVal || opVal === '-') opVal = 'BBVA-' + fechaVal.replace(/\//g, '') + '-' + i;
-
-      const obj = {
-        operacion: opVal,
-        fecha: fmtFecha(fechaVal),
-        descripcion: String(r[colConcepto] || '').trim(),
-        moneda: monedaBanco
-      };
-
-      if(montoVal > 0) {
-        obj.monto = montoVal;
-        nuevos.push(obj);
-      } else {
-        obj.monto = Math.abs(montoVal);
-        obj.estado = 'pendiente';
-        egresosRaw.push(obj);
-      }
+      const montoVal = limpiarMonto(r[colImporte]); if(montoVal === 0) continue;
+      let opVal = String(r[colDoc] || '').trim(); if(!opVal || opVal === '-') opVal = 'BBVA-' + fechaVal.replace(/\//g, '') + '-' + i;
+      const obj = { operacion: opVal, fecha: fmtFecha(fechaVal), descripcion: String(r[colConcepto] || '').trim(), moneda: monedaBanco };
+      if(montoVal > 0) nuevos.push({...obj, monto: montoVal}); else egresosRaw.push({...obj, monto: Math.abs(montoVal), estado: 'pendiente'});
     }
   } else if(esScotiabank) {
-    // --- LÓGICA SCOTIABANK ---
     const headers = rawData[headerIdx].map(h => String(h).trim().toUpperCase());
     const colFecha = headers.findIndex(h => h === 'FECHA');
     const colMov = headers.findIndex(h => h === 'MOVIMIENTO');
     const colImporte = headers.findIndex(h => h === 'IMPORTE');
     const colRef = headers.findIndex(h => h === 'REFERENCIA');
-
     for(let i = headerIdx + 1; i < rawData.length; i++) {
-      const r = rawData[i];
-      if(!r || r.length === 0) continue;
-
-      const montoVal = limpiarMonto(r[colImporte]);
-      let opVal = String(r[colRef] || '').trim();
-      const fechaVal = String(r[colFecha] || '').trim();
-
-      if(!fechaVal || montoVal === 0) continue;
-      if(!opVal) opVal = 'SCO-' + fechaVal.replace(/\//g, '') + '-' + i;
-
-      const obj = {
-        operacion: opVal,
-        fecha: fmtFecha(fechaVal),
-        descripcion: String(r[colMov] || '').trim(),
-        moneda: monedaBanco
-      };
-
-      if(montoVal > 0) {
-        obj.monto = montoVal;
-        nuevos.push(obj);
-      } else {
-        obj.monto = Math.abs(montoVal);
-        obj.estado = 'pendiente';
-        egresosRaw.push(obj);
-      }
+      const r = rawData[i]; if(!r || r.length === 0) continue;
+      const montoVal = limpiarMonto(r[colImporte]); let opVal = String(r[colRef] || '').trim(); const fechaVal = String(r[colFecha] || '').trim();
+      if(!fechaVal || montoVal === 0) continue; if(!opVal) opVal = 'SCO-' + fechaVal.replace(/\//g, '') + '-' + i;
+      const obj = { operacion: opVal, fecha: fmtFecha(fechaVal), descripcion: String(r[colMov] || '').trim(), moneda: monedaBanco };
+      if(montoVal > 0) nuevos.push({...obj, monto: montoVal}); else egresosRaw.push({...obj, monto: Math.abs(montoVal), estado: 'pendiente'});
     }
   } else if(esInterbank) {
-    // --- LÓGICA INTERBANK ---
     const headers = rawData[headerIdx].map(h => String(h).trim().toUpperCase());
     const colFecha = headers.findIndex(h => h.includes('FECHA DE OPERACI'));
     const colOp = headers.findIndex(h => h.includes('NRO. DE OPERACI'));
@@ -443,39 +345,17 @@ async function cargarBancos(input){
     const colDesc = headers.findIndex(h => h === 'DESCRIPCIÓN' || h === 'DESCRIPCION');
     const colCargo = headers.findIndex(h => h === 'CARGO');
     const colAbono = headers.findIndex(h => h === 'ABONO');
-
     for(let i = headerIdx + 1; i < rawData.length; i++) {
-      const r = rawData[i];
-      if(!r || r.length === 0) continue;
-
-      let montoAbono = limpiarMonto(r[colAbono]);
-      let montoCargo = Math.abs(limpiarMonto(r[colCargo]));
-      let opVal = String(r[colOp] || '').trim();
-      let fechaVal = String(r[colFecha] || '').trim();
-
+      const r = rawData[i]; if(!r || r.length === 0) continue;
+      let montoAbono = limpiarMonto(r[colAbono]); let montoCargo = Math.abs(limpiarMonto(r[colCargo]));
+      let opVal = String(r[colOp] || '').trim(); let fechaVal = String(r[colFecha] || '').trim();
       if(!fechaVal || (montoAbono === 0 && montoCargo === 0)) continue;
       if (opVal === '-' || opVal === '') opVal = 'INT-' + fechaVal.replace(/\//g, '') + '-' + i;
-
       const glosaCompleta = [String(r[colMov] || '').trim(), String(r[colDesc] || '').trim()].filter(Boolean).join(' - ');
-
-      const obj = {
-        operacion: opVal,
-        fecha: fmtFecha(fechaVal),
-        descripcion: glosaCompleta,
-        moneda: monedaBanco
-      };
-
-      if(montoAbono > 0) {
-        obj.monto = montoAbono;
-        nuevos.push(obj);
-      } else if (montoCargo > 0) {
-        obj.monto = montoCargo;
-        obj.estado = 'pendiente';
-        egresosRaw.push(obj);
-      }
+      const obj = { operacion: opVal, fecha: fmtFecha(fechaVal), descripcion: glosaCompleta, moneda: monedaBanco };
+      if(montoAbono > 0) nuevos.push({...obj, monto: montoAbono}); else if (montoCargo > 0) egresosRaw.push({...obj, monto: montoCargo, estado: 'pendiente'});
     }
   } else if(esNacion) {
-    // --- LÓGICA BANCO DE LA NACIÓN ---
     const headers = rawData[headerIdx].map(h => String(h).trim().toUpperCase());
     const colFecha = headers.findIndex(h => h === 'FECHA');
     const colDoc = headers.findIndex(h => h === 'DOCUMENTO');
@@ -483,184 +363,96 @@ async function cargarBancos(input){
     const colTrans = headers.findIndex(h => h === 'TRANS.');
     const colCargo = headers.findIndex(h => h === 'CARGO');
     const colAbono = headers.findIndex(h => h === 'ABONO');
-
     for(let i = headerIdx + 1; i < rawData.length; i++) {
-      const r = rawData[i];
-      if(!r || r.length === 0) continue;
-
-      let montoAbono = limpiarMonto(r[colAbono]);
-      let montoCargo = limpiarMonto(r[colCargo]);
-      let opVal = String(r[colDoc] || '').trim();
-
+      const r = rawData[i]; if(!r || r.length === 0) continue;
+      let montoAbono = limpiarMonto(r[colAbono]); let montoCargo = limpiarMonto(r[colCargo]); let opVal = String(r[colDoc] || '').trim();
       if(!opVal || (montoAbono === 0 && montoCargo === 0)) continue;
-
-      let fRaw = String(r[colFecha] || '').replace(/\./g, '-');
-      const rucVal = String(r[colRuc] || '').trim();
-
-      const obj = {
-        operacion: opVal,
-        fecha: fmtFecha(fRaw),
-        descripcion: `DETRACCION BN - ${String(r[colTrans] || '').trim()} - RUC: ${rucVal}`,
-        referencia2: rucVal, 
-        moneda: 'PEN' 
-      };
-
-      if(montoAbono > 0) {
-        obj.monto = montoAbono;
-        nuevos.push(obj);
-      } else if (montoCargo > 0) {
-        obj.monto = montoCargo;
-        obj.estado = 'pendiente';
-        egresosRaw.push(obj);
-      }
+      let fRaw = String(r[colFecha] || '').replace(/\./g, '-'); const rucVal = String(r[colRuc] || '').trim();
+      const obj = { operacion: opVal, fecha: fmtFecha(fRaw), descripcion: `DETRACCION BN - ${String(r[colTrans] || '').trim()} - RUC: ${rucVal}`, referencia2: rucVal, moneda: 'PEN' };
+      if(montoAbono > 0) nuevos.push({...obj, monto: montoAbono}); else if (montoCargo > 0) egresosRaw.push({...obj, monto: montoCargo, estado: 'pendiente'});
     }
   } else {
-  // --- LÓGICA BCP / LIBRO MAYOR CONSOLIDADO ---
-  const headers = rawData[headerIdx].map(h => String(h).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
-  const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta'));
-  const colDesc = headers.findIndex(h => h.includes('descripci') || h.includes('glosa'));
-  const colMonto = headers.findIndex(h => /^monto$/.test(h) || h.includes('importe'));
-  const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('numero')));
-  const colRef2 = headers.findIndex(h => h.includes('referencia2'));
+    const headers = rawData[headerIdx].map(h => String(h).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
+    const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta'));
+    const colDesc = headers.findIndex(h => h.includes('descripci') || h.includes('glosa'));
+    const colMonto = headers.findIndex(h => /^monto$/.test(h) || h.includes('importe'));
+    const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('numero')));
+    const colRef2 = headers.findIndex(h => h.includes('referencia2'));
+    const colFactura = headers.findIndex(h => h === 'factura');
+    const colEstado = headers.findIndex(h => h === 'estado');
+    const colOrd = headers.findIndex(h => h === 'ordenante');
+    const colMoneda = headers.findIndex(h => h === 'moneda' || h.includes('moneda'));
+    const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
+    let contPEN=0, contUSD=0;
 
-  // --- LAS NUEVAS COLUMNAS CLAVE ---
-  const colFactura = headers.findIndex(h => h === 'factura');
-  const colEstado = headers.findIndex(h => h === 'estado');
-  const colOrd = headers.findIndex(h => h === 'ordenante'); // <-- Atrapamos el ordenante
-  // Este formato (Libro Mayor Consolidado) trae moneda POR FILA en una columna "Moneda"
-  // con valores como "01.Soles" / "02.Dolares" — no por archivo completo. Si existe, tiene
-  // prioridad absoluta sobre el detector genérico de encabezado (monedaBanco), porque un
-  // mismo archivo puede mezclar cuentas en soles y en dólares (ej. BBVA 131 USD + BBVA 304 PEN).
-  const colMoneda = headers.findIndex(h => h === 'moneda' || h.includes('moneda'));
+    for(let i = headerIdx + 1; i < rawData.length; i++) {
+      const r = rawData[i]; if(!r || r.length === 0) continue;
+      const valorFactura = colFactura !== -1 ? String(r[colFactura] || '').trim().toUpperCase() : '';
+      const valorEstado = colEstado !== -1 ? String(r[colEstado] || '').trim().toUpperCase() : '';
+      if (valorFactura === 'FDC' || valorFactura.includes('FDC') || valorEstado.includes('FDC')) continue;
+      
+      const montoVal = limpiarMonto(r[colMonto]); const opVal = String(r[opIndex] || '').trim();
+      if(!opVal || montoVal === 0) continue;
+      const ordVal = colOrd !== -1 ? String(r[colOrd] || '').trim() : '';
 
-  const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
-  let contPEN=0, contUSD=0;
+      let monedaFila = monedaBanco;
+      if(colMoneda !== -1){
+        const txtMoneda = String(r[colMoneda] || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+        monedaFila = (txtMoneda.includes('DOLAR') || txtMoneda.includes('USD')) ? 'USD' : 'PEN';
+      }
+      if(monedaFila==='USD') contUSD++; else contPEN++;
 
-  for(let i = headerIdx + 1; i < rawData.length; i++) {
-    const r = rawData[i];
-    if(!r || r.length === 0) continue;
+      const obj = {
+        operacion: opVal, fecha: fmtFecha(r[colFecha] || ''), descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
+        referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '', ordenante: ordVal, moneda: monedaFila
+      };
 
-    // --- REGLA ESTRICTA: IGNORAR FDC ---
-    const valorFactura = colFactura !== -1 ? String(r[colFactura] || '').trim().toUpperCase() : '';
-    const valorEstado = colEstado !== -1 ? String(r[colEstado] || '').trim().toUpperCase() : '';
-    
-    if (valorFactura === 'FDC' || valorFactura.includes('FDC') || valorEstado.includes('FDC')) {
-        continue; // El sistema se salta esta fila de inmediato (Fondo de Capacitación)
+      if(montoVal > 0) nuevos.push({...obj, monto: montoVal}); 
+      else { obj.monto = Math.abs(montoVal); obj.estado = 'pendiente'; const { ordenante, ...objEgreso } = obj; egresosRaw.push(objEgreso); }
     }
-    // ------------------------------------
-
-    const montoVal = limpiarMonto(r[colMonto]);
-    const opVal = String(r[opIndex] || '').trim();
-
-    if(!opVal || montoVal === 0) continue;
-
-    // EXTRAEMOS EL ORDENANTE PARA LAS SUGERENCIAS
-    const ordVal = colOrd !== -1 ? String(r[colOrd] || '').trim() : '';
-
-    // Moneda real de ESTA fila: primero la columna "Moneda" (01.Soles / 02.Dolares),
-    // y solo si no existe esa columna caemos al detector genérico del archivo completo.
-    let monedaFila = monedaBanco;
-    if(colMoneda !== -1){
-      const txtMoneda = String(r[colMoneda] || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
-      monedaFila = (txtMoneda.includes('DOLAR') || txtMoneda.includes('USD')) ? 'USD' : 'PEN';
-    }
-    if(monedaFila==='USD') contUSD++; else contPEN++;
-
-    const obj = {
-      operacion: opVal,
-      fecha: fmtFecha(r[colFecha] || ''),
-      descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
-      referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '',
-      ordenante: ordVal, // <-- LE ENTREGAMOS EL DATO A TU MOTOR DE SUGERENCIAS
-      moneda: monedaFila
-    };
-
-    if(montoVal > 0) {
-      obj.monto = montoVal;
-      nuevos.push(obj);
-    } else {
-      obj.monto = Math.abs(montoVal);
-      obj.estado = 'pendiente';
-      // La tabla "egresos" no tiene columna "ordenante" (solo "abonos" la tiene) —
-      // si se envía, Supabase rechaza el upsert completo con error de esquema.
-      const { ordenante, ...objEgreso } = obj;
-      egresosRaw.push(objEgreso);
-    }
+    if(colMoneda !== -1){ monedaBanco = contUSD>0 ? (contPEN>0 ? `${contPEN} PEN / ${contUSD} USD` : 'USD') : 'PEN'; }
   }
-  // Si detectamos la columna Moneda por fila, mostramos el desglose real en vez de una sola etiqueta
-  if(colMoneda !== -1){ monedaBanco = contUSD>0 ? (contPEN>0 ? `${contPEN} PEN / ${contUSD} USD` : 'USD') : 'PEN'; }
-}
 
-  // 3. GUARDADO
   const {error} = await db.from('abonos').upsert(nuevos,{onConflict:'operacion',ignoreDuplicates:true});
   if(error){ toast('Error: ' + error.message, ''); return; }
-
   if(egresosRaw.length){
     const {error:ee} = await db.from('egresos').upsert(egresosRaw,{onConflict:'operacion',ignoreDuplicates:true});
     if(ee) toast('Advertencia egresos: ' + ee.message, '');
-    else toast('Procesado con éxito (' + (esBbva?'BBVA ':esScotiabank?'SCOTIABANK ':esInterbank?'INTERBANK ':esNacion?'BN ':'BCP ') + monedaBanco + ')', 'green');
-  } else {
-    toast('Operaciones cargadas correctamente (' + (esBbva?'BBVA ':esScotiabank?'SCOTIABANK ':esInterbank?'INTERBANK ':esNacion?'BN ':'BCP ') + monedaBanco + ')', 'green');
-  }
-
+    else toast('Procesado con éxito', 'green');
+  } else toast('Operaciones cargadas correctamente', 'green');
+  
   document.getElementById('slot-bancos').classList.add('loaded');
   document.getElementById('status-bancos').textContent = nuevos.length + ' ing. · ' + egresosRaw.length + ' egr. (' + monedaBanco + ')';
 }
+
 async function cargarInter(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
   const data = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
-  
   let headerIdx = -1, colOpKey = '', colOrdKey = '';
 
-  // --- RADAR FLEXIBLE Y PRECISO DE CABECERAS ---
   for (let i = 0; i < Math.min(data.length, 25); i++) {
     const filaArr = data[i].map(c => String(c).trim().toUpperCase());
-    
-    // Primero buscamos columnas que digan Número o Nro explícitamente para evitar "Tipo de Operación"
     let opMatch = filaArr.find(c => c.includes('NÚMERO - OPERACIÓN') || c.includes('NRO') || c.includes('NUMERO'));
-    
-    // Si no encuentra "Número", busca "Operación" pero ignorando la columna "Tipo"
-    if (!opMatch) {
-      opMatch = filaArr.find(c => c.includes('OPERACI') && !c.includes('TIPO'));
-    }
-    
+    if (!opMatch) opMatch = filaArr.find(c => c.includes('OPERACI') && !c.includes('TIPO'));
     const ordMatch = filaArr.find(c => c.includes('ORDENANTE') || c.includes('BENEFICIARIO') || c.includes('CLIENTE') || c.includes('NOMBRE'));
-
-    if (opMatch && ordMatch) {
-      headerIdx = i; 
-      colOpKey = opMatch; 
-      colOrdKey = ordMatch; 
-      break;
-    }
+    if (opMatch && ordMatch) { headerIdx = i; colOpKey = opMatch; colOrdKey = ordMatch; break; }
   }
 
-  if (headerIdx === -1) { 
-    alert('No se detectaron columnas de Operación y Ordenante en tu Excel interbancario.'); 
-    return; 
-  }
-
+  if (headerIdx === -1) { alert('No se detectaron columnas de Operación y Ordenante.'); return; }
   const headers = data[headerIdx].map(c => String(c).trim().toUpperCase());
-  const opIdx = headers.indexOf(colOpKey);
-  const cbOrdIdx = headers.indexOf(colOrdKey);
+  const opIdx = headers.indexOf(colOpKey); const cbOrdIdx = headers.indexOf(colOrdKey);
     
-  // --- CICLO PRINCIPAL ---
   for (let i = headerIdx + 1; i < data.length; i++) {
-      const row = data[i];
-      if (!row || row.length <= Math.max(opIdx, cbOrdIdx)) continue;
-      
-      const op = String(row[opIdx] || '').trim().replace(/^0+/, ''); 
-      const ord = String(row[cbOrdIdx] || '').trim();
-      
-      if (op) {
-          INTER_MAP[op] = ord;
-      }
+      const row = data[i]; if (!row || row.length <= Math.max(opIdx, cbOrdIdx)) continue;
+      const op = String(row[opIdx] || '').trim().replace(/^0+/, ''); const ord = String(row[cbOrdIdx] || '').trim();
+      if (op) INTER_MAP[op] = ord;
   }
-  
   document.getElementById('slot-inter').classList.add('loaded');
   document.getElementById('status-inter').textContent = Object.keys(INTER_MAP).length + ' registros';
   toast('Interbancarios cargados', 'green');
 }
+
 async function cargarBD(input){
   const wb=await leerExcel(input.files[0]);
   const sheetName=wb.SheetNames.find(s=>/^BD$/i.test(s))||wb.SheetNames[0];
@@ -679,40 +471,26 @@ async function cargarBD(input){
 }
 
 async function procesarYCerrar(){
-  // 1. Descargamos los datos de abonos y facturas
   await cargarDesdeBD();
-  
-  // 2. Descargamos los egresos para que no se queden en blanco (Soluciona consulta 2)
   await cargarEgresosBD();
-  
-  // 3. Cruzamos los ordenantes sin importar los ceros a la izquierda (Soluciona consulta 1 y 3)
   PAGOS.forEach(p=>{ 
     const opClean = String(p.operacion).trim().replace(/^0+/,'');
     const ord = INTER_MAP[opClean]; 
     if(ord) p.ordenante = ord; 
   });
-  
-  // 4. Dibujamos la pantalla
+  recalcularSaldos();
   render();
   renderEgresos();
-  
   hideUpload();
 }
 
 // ─── SUGERENCIA ──────────────────────────────────────────────────────────────
 function extractNumFact(s){
-  let m=s.match(/F\d+[-\s]?0*(\d{4,})/i);
-  if(m) return m[1];
-  m=s.match(/(?<![0-9])(0*(\d{5,}))/);
-  if(m) return m[2];
+  let m=s.match(/F\d+[-\s]?0*(\d{4,})/i); if(m) return m[1];
+  m=s.match(/(?<![0-9])(0*(\d{5,}))/); if(m) return m[2];
   return null;
 }
 
-// Palabras genéricas del rubro construcción / razones sociales peruanas que NO sirven para
-// identificar una empresa específica (aparecen en cientos de razones sociales distintas).
-// Sin este filtro, un ordenante como "INGENIERIA DE LA CONSTRUCCION SAC" podía "matchear" por
-// puro azar contra cualquier otra empresa que también tuviera la palabra "INGENIERIA", aunque
-// no tuvieran ninguna relación real (ej. apellidos distintos).
 const PALABRAS_GENERICAS_EMPRESA = new Set([
   'INGENIERIA','INGENIEROS','INGENIERO','CONSTRUCCION','CONSTRUCCIONES','CONSTRUCTORA','CONSTRUCTOR',
   'CONTRATISTA','CONTRATISTAS','GENERAL','GENERALES','SERVICIO','SERVICIOS','EMPRESA','EMPRESAS',
@@ -721,67 +499,90 @@ const PALABRAS_GENERICAS_EMPRESA = new Set([
   'INVERSION','COMERCIAL','INDUSTRIAL','NACIONAL','INTERNACIONAL','ASOCIADOS','CONSULTORES','CONSULTORIA',
   'ARQUITECTOS','ARQUITECTURA','COMPANIA','TRADING','IMPORT','EXPORT','MULTISERVICIOS','SOLUCIONES'
 ]);
-function sugerirFactura(pago, usadas){
+
+function sugerirFactura(pago){
   const desc=norm(pago.descripcion); const ref2=norm(pago.referencia2||''); const ord=norm(pago.ordenante||'');
-  const monto=pago.monto;
-  // Normalizamos la moneda del abono. Si no viene definida, asumimos PEN (comportamiento histórico).
+  const monto=parseFloat(pago.monto) || 0;
   const monedaPago = (pago.moneda==='USD') ? 'USD' : 'PEN';
   const esBN = esAbonoDetraccionBN(pago);
-  // Universo de facturas restringido SIEMPRE a la misma moneda que el abono.
-  // Esto evita que un abono en USD se sugiera contra una factura en PEN (o al revés)
-  // solo porque el número coincide. Excepción: detracciones del Banco de la Nación
-  // (siempre PEN) contra facturas F201/F301 >S/700 marcadas erróneamente en USD.
-  const facturasMismaMoneda = FACTURAS.filter(f=>{
+  
+  const disponibles = FACTURAS.filter(f=>{
+    if (f.saldo <= 0.01) return false;
     const mismaMoneda=((f.moneda==='USD')?'USD':'PEN')===monedaPago;
     const excepcionDetraccion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
     return mismaMoneda||excepcionDetraccion;
   });
 
-  const candsExactas=facturasMismaMoneda.filter(f=>f.saldo===monto&&!usadas.has(f.factura));
-
   let m=(pago.referencia2||'').match(/F\d+-?0*(\d{4,})/i);
-  if(m){ const nd=m[1]; const f=candsExactas.find(x=>x.factura.includes(nd))||facturasMismaMoneda.find(x=>x.factura.includes(nd)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
+  if(m){ const nd=m[1]; const f=disponibles.find(x=>x.factura.includes(nd)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
   const nd=extractNumFact(pago.descripcion);
-  if(nd){ const f=candsExactas.find(x=>x.factura.includes(nd))||facturasMismaMoneda.find(x=>x.factura.includes(nd)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en descripción',confianza:'alta'}; }
+  if(nd){ const f=disponibles.find(x=>x.factura.includes(nd)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en descripción',confianza:'alta'}; }
   const nr=extractNumFact(pago.referencia2||'');
-  if(nr){ const f=candsExactas.find(x=>x.factura.includes(nr))||facturasMismaMoneda.find(x=>x.factura.includes(nr)&&!usadas.has(x.factura)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
+  if(nr){ const f=disponibles.find(x=>x.factura.includes(nr)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
 
-  const candsNombre=facturasMismaMoneda.filter(f=>f.saldo<=monto&&!usadas.has(f.factura));
-  const palabras=(desc+' '+ref2+' '+ord).split(' ').filter(w=>w.length>3&&!PALABRAS_GENERICAS_EMPRESA.has(w));
-  let best=null,bestScore=0,bestPalabrasUsadas=0;
-  for(const f of candsNombre){
-    const rs=norm(f.razon_social);
-    let score=0,palabrasUsadas=0;
-    for(const w of palabras) if(rs.includes(w)){ score+=w.length; palabrasUsadas++; }
-    if(score>bestScore){bestScore=score;best=f;bestPalabrasUsadas=palabrasUsadas;}
+  const facturasMontoExacto = disponibles.filter(f => Math.abs(f.saldo - monto) < 0.01);
+  const palabrasBusqueda = (ord + ' ' + desc + ' ' + ref2).split(' ').filter(w => w.length > 3 && !PALABRAS_GENERICAS_EMPRESA.has(w));
+
+  if (facturasMontoExacto.length > 0 && palabrasBusqueda.length > 0) {
+    let best = null, bestScore = 0;
+    for (const f of facturasMontoExacto) {
+        const rs = norm(f.razon_social); let score = 0;
+        const ordWords = ord.split(' ').filter(w => w.length > 2 && !PALABRAS_GENERICAS_EMPRESA.has(w));
+        for (const w of ordWords) { if (rs.includes(w)) score += (w.length * 2); }
+        const descWords = (desc + ' ' + ref2).split(' ').filter(w => w.length > 3 && !PALABRAS_GENERICAS_EMPRESA.has(w));
+        for (const w of descWords) { if (rs.includes(w)) score += w.length; }
+        if (score > bestScore) { bestScore = score; best = f; }
+    }
+    if (best && bestScore >= 4) return {factura:best.factura, razon:best.razon_social, motivo:'Importe exacto y coincidencia segura', confianza:'alta'};
   }
-  // Umbral más alto (8, antes 6) porque ya no contamos palabras genéricas del rubro — lo que
-  // queda son en su mayoría nombres/apellidos propios, así que el puntaje real de una coincidencia
-  // genuina es más bajo que antes. Además exigimos que haya matcheado al menos 1 palabra específica.
-  if(best&&bestScore>=8&&bestPalabrasUsadas>=1){
-    const emp=norm(best.razon_social);
-    const elegida=[...candsNombre].filter(f=>norm(f.razon_social)===emp).sort((a,b)=>a.fecha_doc.localeCompare(b.fecha_doc))[0]||best;
-    return {factura:elegida.factura,razon:elegida.razon_social,motivo:(pago.ordenante?'Ordenante interbancario':'Nombre en descripción')+' — más antigua',confianza:'media'};
+
+  if (ord && ord.length > 3) {
+      const ordWords = ord.split(' ').filter(w => w.length > 2 && !PALABRAS_GENERICAS_EMPRESA.has(w));
+      let facturasDelCliente = [];
+      for (const f of disponibles) {
+          const rs = norm(f.razon_social); let coincidencias = 0;
+          for (const w of ordWords) { if (rs.includes(w)) coincidencias++; }
+          if (coincidencias > 0 || rs.includes(ord) || ord.includes(rs)) facturasDelCliente.push(f);
+      }
+      if (facturasDelCliente.length > 0) {
+          facturasDelCliente.sort((a,b) => a.fecha_doc.localeCompare(b.fecha_doc));
+          const pagables = facturasDelCliente.filter(f => f.saldo <= monto);
+          if (pagables.length > 0) return {factura:pagables[0].factura, razon:pagables[0].razon_social, motivo:'Ordenante detectado — Factura más antigua', confianza:'media'};
+          return {factura:facturasDelCliente[0].factura, razon:facturasDelCliente[0].razon_social, motivo:'Abono parcial de cliente detectado', confianza:'media'};
+      }
+  }
+
+  const candsGeneral = disponibles.filter(f => f.saldo <= monto);
+  if (palabrasBusqueda.length > 0 && candsGeneral.length > 0) {
+      let best = null, bestScore = 0, bestPalabrasUsadas = 0;
+      for (const f of candsGeneral) {
+          const rs = norm(f.razon_social); let score = 0, palabrasUsadas = 0;
+          for (const w of palabrasBusqueda) if (rs.includes(w)) { score += w.length; palabrasUsadas++; }
+          if (score > bestScore) { bestScore = score; best = f; bestPalabrasUsadas = palabrasUsadas; }
+      }
+      if (best && bestScore >= 8 && bestPalabrasUsadas >= 1) {
+          const emp = norm(best.razon_social);
+          const elegida = disponibles.filter(f => norm(f.razon_social) === emp).sort((a,b) => a.fecha_doc.localeCompare(b.fecha_doc))[0] || best;
+          return {factura:elegida.factura, razon:elegida.razon_social, motivo:'Similitud de texto — más antigua', confianza:'media'};
+      }
   }
   return null;
 }
 
 // ─── ACCIONES ────────────────────────────────────────────────────────────────
-function migrarFacturas(){
-  PAGOS.forEach(p=>{ if(!p.facturas) p.facturas=p.facturaAsignada?[{factura:p.facturaAsignada,razon:p.razonAsignada||''}]:[{factura:'',razon:''}]; });
-}
+function migrarFacturas(){ PAGOS.forEach(p=>{ if(!p.facturas) p.facturas=p.facturaAsignada?[{factura:p.facturaAsignada,razon:p.razonAsignada||''}]:[{factura:'',razon:''}]; }); }
 
 async function confirmar(id){
   const p=PAGOS.find(x=>x.id===id);
   if(!p||!p.facturas.some(f=>f.factura)) return;
   const rows=p.facturas.filter(f=>f.factura).map(f=>({
     operacion:String(p.operacion), factura:f.factura, razon:f.razon||'',
-    importe_factura:FACTURAS.find(x=>x.factura===f.factura)?.saldo||p.monto,
+    importe_factura:FACTURAS.find(x=>x.factura===f.factura)?.saldo_original||p.monto,
     estado:'confirmado', motivo:p.motivo||'', confianza:p.confianza||''
   }));
   const {error}=await db.from('conciliaciones').upsert(rows,{onConflict:'operacion,factura'});
   if(error){ toast('Error guardando: '+error.message,''); return; }
-  p.estado='confirmado'; actualizarStats(); render(); toast('Confirmado y guardado ✓','green');
+  p.estado='confirmado'; recalcularSaldos(); actualizarStats(); render(); toast('Confirmado y guardado ✓','green');
 }
 
 async function quitar(id){
@@ -789,7 +590,7 @@ async function quitar(id){
   if(!p) return;
   await db.from('conciliaciones').delete().eq('operacion',String(p.operacion));
   p.estado='pendiente'; p.facturas=[{factura:'',razon:''}]; p.motivo=''; p.confianza='';
-  actualizarStats(); render(); toast('Asignación eliminada','');
+  recalcularSaldos(); actualizarStats(); render(); toast('Asignación eliminada','');
 }
 
 async function eliminarAbono(id){
@@ -800,15 +601,12 @@ async function eliminarAbono(id){
   const {error}=await db.from('abonos').delete().eq('operacion',String(p.operacion));
   if(error){ toast('Error al eliminar: '+error.message,''); return; }
   PAGOS.splice(PAGOS.findIndex(x=>x.id===id),1);
-  actualizarStats(); render(); toast('Abono eliminado ✓','');
+  recalcularSaldos(); actualizarStats(); render(); toast('Abono eliminado ✓','');
 }
 
 function agregarLinea(id){ const p=PAGOS.find(x=>x.id===id); if(p){p.facturas.push({factura:'',razon:''});render();} }
-function quitarLinea(id,idx){ const p=PAGOS.find(x=>x.id===id); if(!p) return; if(p.facturas.length<=1){p.facturas=[{factura:'',razon:''}];}else{p.facturas.splice(idx,1);} p.estado=p.facturas.some(f=>f.factura)?'manual':'pendiente'; actualizarStats(); render(); }
-function cambiarLinea(id,idx,val){ const p=PAGOS.find(x=>x.id===id); if(!p) return; const f=FACTURAS.find(x=>x.factura===val); p.facturas[idx]={factura:val,razon:f?f.razon_social:''}; p.estado=val?'manual':'pendiente'; p.motivo='Asignación manual'; p.confianza=''; p.detraccionAceptada=false; actualizarStats(); render(); }
-// Checkbox manual (solo en memoria, no se guarda en Supabase) para aceptar que el monto de
-// una detracción del Banco de la Nación no coincida exacto con el saldo de la factura F201/F301
-// (diferencia normal por ser solo 10-12% del importe, más redondeo o tipo de cambio).
+function quitarLinea(id,idx){ const p=PAGOS.find(x=>x.id===id); if(!p) return; if(p.facturas.length<=1){p.facturas=[{factura:'',razon:''}];}else{p.facturas.splice(idx,1);} p.estado=p.facturas.some(f=>f.factura)?'manual':'pendiente'; recalcularSaldos(); actualizarStats(); render(); }
+function cambiarLinea(id,idx,val){ const p=PAGOS.find(x=>x.id===id); if(!p) return; const f=FACTURAS.find(x=>x.factura===val); p.facturas[idx]={factura:val,razon:f?f.razon_social:''}; p.estado=val?'manual':'pendiente'; p.motivo='Asignación manual'; p.confianza=''; p.detraccionAceptada=false; recalcularSaldos(); actualizarStats(); render(); }
 function toggleDetraccionAceptada(id,checked){ const p=PAGOS.find(x=>x.id===id); if(!p) return; p.detraccionAceptada=checked; render(); }
 
 // ─── STATS ───────────────────────────────────────────────────────────────────
@@ -850,10 +648,7 @@ function render(){
   document.getElementById('count-label').textContent=lista.length+' abono'+(lista.length!==1?'s':'')+' mostrado'+(lista.length!==1?'s':'');
   if(!lista.length){ document.getElementById('lista').innerHTML='<div class="empty"><span class="empty-icon">🔍</span>Sin resultados para este filtro</div>'; return; }
 
-  const todasUsadas=id=>new Set(PAGOS.filter(p=>p.id!==id&&(p.estado==='confirmado'||p.estado==='manual')).flatMap(p=>(p.facturas||[]).map(f=>f.factura)).filter(Boolean));
-
   document.getElementById('lista').innerHTML=lista.map(p=>{
-    const usadasOtros=todasUsadas(p.id);
     const bClass=p.estado==='confirmado'?'badge-confirmed':p.estado==='manual'?'badge-manual':p.confianza==='alta'?'badge-high':p.confianza==='media'?'badge-med':'badge-pend';
     const bLabel=p.estado==='confirmado'?'CONFIRMADO':p.estado==='manual'?'MANUAL':p.confianza==='alta'?'SUGERIDO ✓':p.confianza==='media'?'SUGERIDO ~':'SIN ASIGNAR';
     const cCard=p.estado==='confirmado'?'confirmed':p.estado==='manual'?'manual':p.estado==='sugerida'?'suggested':'pending';
@@ -870,33 +665,34 @@ function render(){
 
     const monedaPagoActual = (p.moneda==='USD') ? 'USD' : 'PEN';
     const esBN = esAbonoDetraccionBN(p);
+    
     const lineas=(p.facturas||[{factura:'',razon:''}]).map((item,idx)=>{
-      const usadasAqui=new Set([...usadasOtros,...(p.facturas||[]).filter((_,i)=>i!==idx).map(f=>f.factura).filter(Boolean)]);
-      // Solo mostramos facturas de la MISMA moneda que el abono, para no permitir
-      // conciliar por error un abono en dólares contra una factura en soles (o al revés).
-      // EXCEPCIÓN: un abono de detracción del Banco de la Nación (siempre PEN) sí puede
-      // aplicarse contra una factura F201/F301 >S/700 aunque esté marcada en USD, porque
-      // ese banco nunca acepta detracciones en dólares — lo más probable es un dato mal
-      // registrado. Se muestra marcada con ⚠ para que Antonio decida.
       const opts=FACTURAS.filter(f=>{
         const mismaMoneda=((f.moneda==='USD')?'USD':'PEN')===monedaPagoActual;
         const excepcionDetraccion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
         return mismaMoneda||excepcionDetraccion;
       })
-        .filter(f=>!usadasAqui.has(f.factura)||f.factura===item.factura)
+        .filter(f => f.saldo > 0.01 || f.factura === item.factura)
         .sort((a,b)=>a.razon_social.localeCompare(b.razon_social,'es')).map(f=>{
         const sel=item.factura===f.factura?'selected':'';
         const esExcepcion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
         const esDetraccionNormal=!esExcepcion && requiereDetraccionPEN(f);
         const marca=esExcepcion?'⚠ USD→revisar — ':(esDetraccionNormal?'🧾 Detracc. — ':'');
-        return `<option value="${escaparHTML(f.factura)}" ${sel}>${marca}${escaparHTML(f.factura)} — ${fmtMonto(f.saldo,f.moneda)} — ${escaparHTML(f.razon_social).substring(0,35)}</option>`;
+        
+        let txtMonto = fmtMonto(f.saldo_original !== undefined ? f.saldo_original : f.saldo, f.moneda);
+        if (f.saldo < (f.saldo_original||f.saldo) && f.saldo > 0 && f.factura !== item.factura) {
+             txtMonto += ` (Resta ${fmtMonto(f.saldo, f.moneda)})`;
+        }
+        
+        return `<option value="${escaparHTML(f.factura)}" ${sel}>${marca}${escaparHTML(f.factura)} — ${txtMonto} — ${escaparHTML(f.razon_social).substring(0,35)}</option>`;
       }).join('');
+      
       const btnQL=(p.facturas||[]).length>1||item.factura?`<button class="btn btn-remove" onclick="quitarLinea(${p.id},${idx})">✕</button>`:'';
       return `<div class="factura-row"><select class="factura-select" onchange="cambiarLinea(${p.id},${idx},this.value)"><option value="">— Seleccionar factura —</option>${opts}</select>${btnQL}</div>`;
     }).join('');
 
     const facturaElegida = (p.facturas||[]).map(item=>FACTURAS.find(f=>f.factura===item.factura)).find(Boolean);
-    const necesitaAceptar = esBN && facturaElegida && requiereDetraccionPEN(facturaElegida) && parseFloat(p.monto)!==parseFloat(facturaElegida.saldo);
+    const necesitaAceptar = esBN && facturaElegida && requiereDetraccionPEN(facturaElegida) && parseFloat(p.monto)!==parseFloat(facturaElegida.saldo_original||facturaElegida.saldo);
     const checkDetraccion = necesitaAceptar ? `<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--amber-text);background:var(--amber-dim);border-radius:6px;padding:6px 10px;width:100%;margin-top:6px">
         <input type="checkbox" ${p.detraccionAceptada?'checked':''} onchange="toggleDetraccionAceptada(${p.id},this.checked)">
         🧾 El monto no coincide con el saldo total — es normal en detracción (10-12% + redondeo/TC). Marcar para habilitar "Confirmar".
@@ -933,6 +729,7 @@ function renderFacturas(){
   const hoy=new Date(); hoy.setHours(0,0,0,0);
 
   let lista=FACTURAS.filter(f=>{
+    if (f.saldo <= 0.01) return false;
     const dias=diasHasta(f.fecha_ven);
     if(fil==='vencida'&&!(dias!==null&&dias<0)) return false;
     if(fil==='proxima'&&!(dias!==null&&dias>=0&&dias<=7)) return false;
@@ -941,13 +738,12 @@ function renderFacturas(){
     return true;
   });
 
-  const vencidas=FACTURAS.filter(f=>{ const d=diasHasta(f.fecha_ven); return d!==null&&d<0; }).length;
-  const proximas=FACTURAS.filter(f=>{ const d=diasHasta(f.fecha_ven); return d!==null&&d>=0&&d<=7; }).length;
-  // IMPORTANTE: nunca sumamos soles y dólares en un mismo total (eso falsea la cifra).
-  // Mostramos el saldo separado por moneda.
+  const vencidas=FACTURAS.filter(f=>{ const d=diasHasta(f.fecha_ven); return d!==null&&d<0&&f.saldo>0.01; }).length;
+  const proximas=FACTURAS.filter(f=>{ const d=diasHasta(f.fecha_ven); return d!==null&&d>=0&&d<=7&&f.saldo>0.01; }).length;
   const saldoPEN=FACTURAS.filter(f=>f.moneda!=='USD').reduce((a,f)=>a+(f.saldo||0),0);
   const saldoUSD=FACTURAS.filter(f=>f.moneda==='USD').reduce((a,f)=>a+(f.saldo||0),0);
-  document.getElementById('f-total').textContent=FACTURAS.length;
+  
+  document.getElementById('f-total').textContent=lista.length;
   document.getElementById('f-venc').textContent=vencidas;
   document.getElementById('f-prox').textContent=proximas;
   document.getElementById('f-saldo').textContent=saldoUSD>0 ? fmtMonto(saldoPEN,'PEN')+' · '+fmtMonto(saldoUSD,'USD') : fmtMonto(saldoPEN,'PEN');
@@ -988,6 +784,7 @@ function renderFacturas(){
     </div>`;
   }).join('');
 }
+
 // ─── EXPORTAR ────────────────────────────────────────────────────────────────
 function exportarCSV(){
   migrarFacturas();
@@ -997,9 +794,9 @@ function exportarCSV(){
     const base=[p.fecha,p.descripcion,p.ordenante||'',(p.moneda==='USD'?'USD':'PEN'),p.monto,p.operacion];
     if(!facts.length){ rows.push([...base,'','','',p.monto,p.estado]); }
     else{
-      const sumF=facts.reduce((a,f)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; return a+(fd.saldo||0); },0);
+      const sumF=facts.reduce((a,f)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; return a+parseFloat(fd.saldo_original||fd.saldo||0); },0);
       const saldo=Math.round((p.monto-sumF)*100)/100;
-      facts.forEach((f,i)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; rows.push([...base,f.factura,f.razon||'',fd.saldo||'',i===facts.length-1&&saldo>0?saldo:'',p.estado]); });
+      facts.forEach((f,i)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; rows.push([...base,f.factura,f.razon||'',fd.saldo_original||fd.saldo||'',i===facts.length-1&&saldo>0?saldo:'',p.estado]); });
     }
   });
   const csv=rows.map(r=>r.map(v=>'"'+String(v||'').replace(/"/g,"'")+'"').join(',')).join('\n');
@@ -1018,11 +815,11 @@ function exportarSistema(){
     const facts=(p.facturas||[]).filter(f=>f.factura);
     const opKey=String(p.operacion).replace(/^0+/,'');
     const bd=BD_MAP[opKey]||BD_MAP[p.operacion]||null;
-    const sumF=facts.reduce((a,f)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; return a+(parseFloat(fd.saldo)||0); },0);
+    const sumF=facts.reduce((a,f)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; return a+parseFloat(fd.saldo_original||fd.saldo||0); },0);
     const saldo=Math.round((p.monto-sumF)*100)/100;
     facts.forEach((f,i)=>{
       const fd=FACTURAS.find(x=>x.factura===f.factura)||{};
-      const importeFact=fd.saldo||p.monto;
+      const importeFact=fd.saldo_original||fd.saldo||p.monto;
       const fm=f.factura.match(/([A-Z]\d+)-0*(\d+)/);
       const serieF=fm?fm[1]:''; const correlF=fm?fm[2].padStart(8,'0'):'';
       if(bd){ dataRows.push([bd.fecha2,bd.cdoccan,bd.banco3,bd.op,bd.cta,bd.moneda,bd.importe,bd.tc,bd.codpago,bd.tipodoc,bd.serie,bd.correl,bd.fecha5,bd.venc,bd.codid,bd.ruc,bd.razsoc,importeFact,bd.dolares||'',bd.cuenta6,bd.glosa,'','','','','','','','']); }
