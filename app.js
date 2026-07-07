@@ -520,6 +520,31 @@ function sugerirFactura(pago){
   const nr=extractNumFact(pago.referencia2||'');
   if(nr){ const f=disponibles.find(x=>x.factura.includes(nr)); if(f) return {factura:f.factura,razon:f.razon_social,motivo:'N° factura en referencia',confianza:'alta'}; }
 
+  // --- NUEVO: FRANCOTIRADOR DE VOUCHER BCP (Últimos 4 dígitos + Relleno de Ceros) ---
+  const opNumeros = String(pago.operacion).replace(/\D/g, ''); 
+  if (opNumeros.length >= 4 && monto > 0) {
+      const ultimos4 = opNumeros.slice(-4); 
+      
+      const fPorVoucher = disponibles.find(f => {
+          if (Math.abs(f.saldo - monto) >= 0.01 || !f.glosa) return false;
+          let textoGlosa = String(f.glosa).trim();
+          if (!isNaN(textoGlosa) && textoGlosa.length > 0 && textoGlosa.length < 4) {
+              textoGlosa = textoGlosa.padStart(4, '0');
+          }
+          return textoGlosa.includes(ultimos4);
+      });
+      
+      if (fPorVoucher) {
+          return {
+              factura: fPorVoucher.factura, 
+              razon: fPorVoucher.razon_social, 
+              motivo: `Match de Voucher: Terminación ${ultimos4} en Glosa`, 
+              confianza: 'alta'
+          };
+      }
+  }
+  // -----------------------------------------------------------------------------------
+
   const facturasMontoExacto = disponibles.filter(f => Math.abs(f.saldo - monto) < 0.01);
   const palabrasBusqueda = (ord + ' ' + desc + ' ' + ref2).split(' ').filter(w => w.length > 3 && !PALABRAS_GENERICAS_EMPRESA.has(w));
 
@@ -568,7 +593,6 @@ function sugerirFactura(pago){
   }
   return null;
 }
-
 // ─── ACCIONES ────────────────────────────────────────────────────────────────
 function migrarFacturas(){ PAGOS.forEach(p=>{ if(!p.facturas) p.facturas=p.facturaAsignada?[{factura:p.facturaAsignada,razon:p.razonAsignada||''}]:[{factura:'',razon:''}]; }); }
 
