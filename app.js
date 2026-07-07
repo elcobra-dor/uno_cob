@@ -219,6 +219,7 @@ async function cargarFacturas(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+  
   if (!rows.length) { alert('El archivo seleccionado está vacío.'); return; }
   
   const headers = Object.keys(rows[0]);
@@ -230,15 +231,12 @@ async function cargarFacturas(input){
     const n = String(numero || '').trim().replace(/^0+/, '');
     return s && n ? `${s}-${n}` : null;
   }
-
-  // --- NUEVO: ATRAPADOR MULTI-FORMATO ---
-  function atraparGlosa(r) {
-    return String(r['GLOSA'] || r['Glosa'] || r['glosa'] || r['DESCRIPCION'] || r['Descripcion'] || r['descripcion'] || '').trim();
-  }
   
   let nuevas = [];
   
   if (esContable) {
+    // Columna donde se anotan los últimos 4 dígitos del pago BCP (acepta 'GLOSA', 'GLOSA_BCP', etc.)
+    const colGlosa = headers.find(h => /^glosa/i.test(h));
     const resumenContable = {};
     rows.forEach(r => {
       const codFactura = limpiarDocNum(r['SERIE'], r['NUMERO']);
@@ -246,20 +244,22 @@ async function cargarFacturas(input){
       const monedaDoc = String(r['M_REG'] || 'S').trim().toUpperCase();
       const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
       const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
+      const glosaFila = colGlosa ? String(r[colGlosa] || '').trim() : '';
       
       if (!resumenContable[codFactura] || saldoFila < resumenContable[codFactura].saldo) {
+        const glosaPrevia = resumenContable[codFactura]?.glosa || '';
         resumenContable[codFactura] = {
           factura: codFactura, razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
           fecha_doc: fmtFecha(r['FECHA_DOC']), fecha_ven: fmtFecha(r['FECHA_VEN']),
           saldo: saldoFila, mes: parseInt(r['MES']) || 0, moneda: esDolares ? 'USD' : 'PEN',
-          glosa: atraparGlosa(r) // <--- USAMOS EL ATRAPADOR AQUÍ
+          glosa: glosaFila || glosaPrevia
         };
       }
     });
     nuevas = Object.values(resumenContable).filter(f => f.saldo > 0);
     const { error } = await db.from('facturas').upsert(nuevas, { onConflict: 'factura' });
     if (error) { toast('Error BD: ' + error.message, ''); return; }
-    toast(nuevas.length + ' facturas procesadas (Contable)', 'green');
+    toast(nuevas.length + ' facturas procesadas (Archivo Contable)', 'green');
     
   } else if (esComercial) {
     const resumenComercial = {};
@@ -273,8 +273,7 @@ async function cargarFacturas(input){
       if (!resumenComercial[codFactura]) {
         resumenComercial[codFactura] = {
           factura: codFactura, razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-          fecha_doc: fmtFecha(r['FECHA_DOC']), saldo: 0, mes: parseInt(r['MES']) || 0, moneda: esDolaresFila ? 'USD' : 'PEN',
-          glosa: atraparGlosa(r) // <--- Y AQUÍ TAMBIÉN
+          fecha_doc: fmtFecha(r['FECHA_DOC']), saldo: 0, mes: parseInt(r['MES']) || 0, moneda: esDolaresFila ? 'USD' : 'PEN'
         };
       }
       resumenComercial[codFactura].saldo += totalFila;
@@ -282,11 +281,14 @@ async function cargarFacturas(input){
     nuevas = Object.values(resumenComercial).filter(f => f.saldo > 0);
     const { error } = await db.from('facturas').upsert(nuevas, { onConflict: 'factura' });
     if (error) { toast('Error BD: ' + error.message, ''); return; }
-    toast(nuevas.length + ' facturas procesadas (Comercial)', 'green');
-  } else { alert('Archivo no reconocido.'); return; }
-  
+    toast(nuevas.length + ' facturas procesadas (Archivo Comercial)', 'green');
+    
+  } else {
+    alert('Archivo no reconocido.'); return;
+  }
   await cargarDesdeBD();
 }
+
 async function cargarBancos(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
