@@ -721,34 +721,44 @@ function render(){
     const hayAsig=(p.facturas||[]).some(f=>f.factura);
     const btnQuit=hayAsig?`<button class="btn btn-remove" onclick="quitar(${p.id})">✕ Quitar</button>`:'';
     const btnDel=`<button class="btn btn-remove" onclick="eliminarAbono(${p.id})" title="Eliminar abono permanentemente" style="margin-left:auto">🗑 Eliminar</button>`;
+    
+    // El nuevo botón para ingresos no operativos
+    const btnArchivar = p.estado !== 'confirmado' && !hayAsig 
+      ? `<button class="btn" onclick="archivarAbono(${p.id})" style="color:var(--text3);border-style:dashed;font-size:11px">🗂️ Otros Ingresos</button>` 
+      : '';
 
     const monedaPagoActual = (p.moneda==='USD') ? 'USD' : 'PEN';
     const esBN = esAbonoDetraccionBN(p);
     
-    const lineas=(p.facturas||[{factura:'',razon:''}]).map((item,idx)=>{
-      const opts=FACTURAS.filter(f=>{
-        const mismaMoneda=((f.moneda==='USD')?'USD':'PEN')===monedaPagoActual;
-        const excepcionDetraccion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
-        return mismaMoneda||excepcionDetraccion;
-      })
-        .filter(f => f.saldo > 0.01 || f.factura === item.factura)
-        .sort((a,b)=>a.razon_social.localeCompare(b.razon_social,'es')).map(f=>{
-        const sel=item.factura===f.factura?'selected':'';
-        const esExcepcion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
-        const esDetraccionNormal=!esExcepcion && requiereDetraccionPEN(f);
-        const marca=esExcepcion?'⚠ USD→revisar — ':(esDetraccionNormal?'🧾 Detracc. — ':'');
-        
-        let txtMonto = fmtMonto(f.saldo_original !== undefined ? f.saldo_original : f.saldo, f.moneda);
-        if (f.saldo < (f.saldo_original||f.saldo) && f.saldo > 0 && f.factura !== item.factura) {
-             txtMonto += ` (Resta ${fmtMonto(f.saldo, f.moneda)})`;
-        }
-        
-        return `<option value="${escaparHTML(f.factura)}" ${sel}>${marca}${escaparHTML(f.factura)} — ${txtMonto} — ${escaparHTML(f.razon_social).substring(0,35)}</option>`;
-      }).join('');
-      
-      const btnQL=(p.facturas||[]).length>1||item.factura?`<button class="btn btn-remove" onclick="quitarLinea(${p.id},${idx})">✕</button>`:'';
-      return `<div class="factura-row"><select class="factura-select" onchange="cambiarLinea(${p.id},${idx},this.value)"><option value="">— Seleccionar factura —</option>${opts}</select>${btnQL}</div>`;
-    }).join('');
+    // Verificamos si es un ingreso no operativo clasificado manualmente
+    const esNoOperativo = p.facturas && p.facturas[0] && p.facturas[0].factura === 'NO_OPERATIVO';
+    
+    let lineas = '';
+    if (esNoOperativo) {
+        lineas = `<div class="factura-row" style="background:var(--bg3); padding:10px; border-radius:6px; color:var(--text2); font-size:12px; font-weight:500; border:1px solid var(--border);">
+                     🗂️ <b>Ingreso No Operativo:</b> ${escaparHTML(p.facturas[0].razon)}
+                  </div>`;
+    } else {
+        lineas=(p.facturas||[{factura:'',razon:''}]).map((item,idx)=>{
+          const opts=FACTURAS.filter(f=>{
+            const mismaMoneda=((f.moneda==='USD')?'USD':'PEN')===monedaPagoActual;
+            const excepcionDetraccion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
+            return mismaMoneda||excepcionDetraccion;
+          })
+            .filter(f => f.saldo > 0.01 || f.factura === item.factura)
+            .sort((a,b)=>a.razon_social.localeCompare(b.razon_social,'es')).map(f=>{
+            const sel=item.factura===f.factura?'selected':'';
+            const esExcepcion=esBN && f.moneda==='USD' && requiereDetraccionPEN(f);
+            const esDetraccionNormal=!esExcepcion && requiereDetraccionPEN(f);
+            const marca=esExcepcion?'⚠ USD→revisar — ':(esDetraccionNormal?'🧾 Detracc. — ':'');
+            let txtMonto = fmtMonto(f.saldo_original !== undefined ? f.saldo_original : f.saldo, f.moneda);
+            if (f.saldo < (f.saldo_original||f.saldo) && f.saldo > 0 && f.factura !== item.factura) { txtMonto += ` (Resta ${fmtMonto(f.saldo, f.moneda)})`; }
+            return `<option value="${escaparHTML(f.factura)}" ${sel}>${marca}${escaparHTML(f.factura)} — ${txtMonto} — ${escaparHTML(f.razon_social).substring(0,35)}</option>`;
+          }).join('');
+          const btnQL=(p.facturas||[]).length>1||item.factura?`<button class="btn btn-remove" onclick="quitarLinea(${p.id},${idx})">✕</button>`:'';
+          return `<div class="factura-row"><select class="factura-select" onchange="cambiarLinea(${p.id},${idx},this.value)"><option value="">— Seleccionar factura —</option>${opts}</select>${btnQL}</div>`;
+        }).join('');
+    }
 
     const facturaElegida = (p.facturas||[]).map(item=>FACTURAS.find(f=>f.factura===item.factura)).find(Boolean);
     const necesitaAceptar = esBN && facturaElegida && requiereDetraccionPEN(facturaElegida) && parseFloat(p.monto)!==parseFloat(facturaElegida.saldo_original||facturaElegida.saldo);
@@ -756,7 +766,9 @@ function render(){
         <input type="checkbox" ${p.detraccionAceptada?'checked':''} onchange="toggleDetraccionAceptada(${p.id},this.checked)">
         🧾 El monto no coincide con el saldo total — es normal en detracción (10-12% + redondeo/TC). Marcar para habilitar "Confirmar".
       </label>` : '';
+      
     const btnConf=p.estado!=='confirmado'&&hayAsig&&!(necesitaAceptar&&!p.detraccionAceptada)?`<button class="btn btn-confirm" onclick="confirmar(${p.id})">✓ Confirmar</button>`:(p.estado!=='confirmado'&&hayAsig?`<button class="btn" disabled title="Marca el check de detracción para habilitar" style="opacity:.5;cursor:not-allowed">✓ Confirmar</button>`:'');
+    const btnAddFact = esNoOperativo ? '' : `<button class="btn" onclick="agregarLinea(${p.id})" style="color:var(--text3);border-style:dashed;font-size:11px">+ agregar factura</button>`;
 
     return `<div class="card ${cCard}">
       <div class="card-top">
@@ -773,7 +785,8 @@ function render(){
       ${lineas}
       ${checkDetraccion}
       <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;width:100%">
-        <button class="btn" onclick="agregarLinea(${p.id})" style="color:var(--text3);border-style:dashed;font-size:11px">+ agregar factura</button>
+        ${btnAddFact}
+        ${btnArchivar}
         ${btnConf}${btnQuit}${btnDel}
       </div>
       ${motivoSeguro}
