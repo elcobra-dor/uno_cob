@@ -681,31 +681,38 @@ function actualizarStats(){
      else pendPEN += parseFloat(p.monto || 0);
   });
 
-  document.getElementById('st-total').textContent = PAGOS.length;
-  document.getElementById('st-conf').textContent = conf.length;
-  document.getElementById('st-pend').textContent = pend.length;
-  document.getElementById('st-pct').textContent = pct + '%';
-  document.getElementById('prog').style.width = pct + '%';
+  const elTotal = document.getElementById('st-total'); if(elTotal) elTotal.textContent = PAGOS.length;
+  const elConf = document.getElementById('st-conf'); if(elConf) elConf.textContent = conf.length;
+  const elPend = document.getElementById('st-pend'); if(elPend) elPend.textContent = pend.length;
+  const elPct = document.getElementById('st-pct'); if(elPct) elPct.textContent = pct + '%';
+  const elProg = document.getElementById('prog'); if(elProg) elProg.style.width = pct + '%';
   
   const elMini = document.getElementById('stats-mini');
   if(elMini) elMini.textContent = conf.length + '/' + PAGOS.length + ' confirmados';
 
-  // Mostrar los montos en el HTML
-  const elMontoPend = document.getElementById('st-monto-pend');
+  // --- TRUCO JS: Crear el texto del monto dinámicamente si no existe ---
+  let elMontoPend = document.getElementById('st-monto-pend');
+  
+  if (!elMontoPend && elPend) {
+     // Creamos la etiqueta desde cero
+     elMontoPend = document.createElement('div');
+     elMontoPend.id = 'st-monto-pend';
+     elMontoPend.style.fontSize = '12px';
+     elMontoPend.style.color = 'var(--text3)';
+     elMontoPend.style.fontWeight = '600';
+     elMontoPend.style.marginTop = '4px';
+     
+     // La inyectamos justo en la caja donde vive el contador de pendientes
+     elPend.parentElement.appendChild(elMontoPend);
+  }
+  
+  // Imprimimos el dinero en pantalla
   if(elMontoPend) {
      let txt = fmtMonto(pendPEN, 'PEN');
      if (pendUSD > 0) txt += ' · ' + fmtMonto(pendUSD, 'USD');
      elMontoPend.textContent = txt;
   }
 }
-
-function poblarFiltroMontos(){
-  const montos=[...new Set(PAGOS.map(p=>p.monto))].sort((a,b)=>a-b);
-  const sel=document.getElementById('fil-monto');
-  sel.innerHTML='<option value="todos">Todos los montos</option>';
-  montos.forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=fmtMonto(m); sel.appendChild(o); });
-}
-
 // ─── RENDER CONCILIACION ─────────────────────────────────────────────────────
 function render(){
   migrarFacturas();
