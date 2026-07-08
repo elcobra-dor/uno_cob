@@ -713,6 +713,19 @@ function actualizarStats(){
      elMontoPend.textContent = txt;
   }
 }
+
+function poblarFiltroMontos(){
+  const montos = [...new Set(PAGOS.map(p=>p.monto))].sort((a,b)=>a-b);
+  const sel = document.getElementById('fil-monto');
+  if(!sel) return;
+  sel.innerHTML = '<option value="todos">Todos los montos</option>';
+  montos.forEach(m => { 
+    const o = document.createElement('option'); 
+    o.value = m; 
+    o.textContent = fmtMonto(m); 
+    sel.appendChild(o); 
+  });
+}
 // ─── RENDER CONCILIACION ─────────────────────────────────────────────────────
 function render(){
   migrarFacturas();
