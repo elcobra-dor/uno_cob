@@ -670,15 +670,33 @@ function toggleDetraccionAceptada(id,checked){ const p=PAGOS.find(x=>x.id===id);
 
 // ─── STATS ───────────────────────────────────────────────────────────────────
 function actualizarStats(){
-  const conf=PAGOS.filter(p=>p.estado==='confirmado').length;
-  const pend=PAGOS.filter(p=>p.estado!=='confirmado').length;
-  const pct=PAGOS.length?Math.round(conf/PAGOS.length*100):0;
-  document.getElementById('st-total').textContent=PAGOS.length;
-  document.getElementById('st-conf').textContent=conf;
-  document.getElementById('st-pend').textContent=pend;
-  document.getElementById('st-pct').textContent=pct+'%';
-  document.getElementById('prog').style.width=pct+'%';
-  document.getElementById('stats-mini').textContent=conf+'/'+PAGOS.length+' confirmados';
+  const conf = PAGOS.filter(p=>p.estado==='confirmado');
+  const pend = PAGOS.filter(p=>p.estado!=='confirmado');
+  const pct = PAGOS.length ? Math.round(conf.length/PAGOS.length*100) : 0;
+  
+  // Novedad: Sumadora de montos pendientes
+  let pendPEN = 0, pendUSD = 0;
+  pend.forEach(p => {
+     if (p.moneda === 'USD') pendUSD += parseFloat(p.monto || 0);
+     else pendPEN += parseFloat(p.monto || 0);
+  });
+
+  document.getElementById('st-total').textContent = PAGOS.length;
+  document.getElementById('st-conf').textContent = conf.length;
+  document.getElementById('st-pend').textContent = pend.length;
+  document.getElementById('st-pct').textContent = pct + '%';
+  document.getElementById('prog').style.width = pct + '%';
+  
+  const elMini = document.getElementById('stats-mini');
+  if(elMini) elMini.textContent = conf.length + '/' + PAGOS.length + ' confirmados';
+
+  // Mostrar los montos en el HTML
+  const elMontoPend = document.getElementById('st-monto-pend');
+  if(elMontoPend) {
+     let txt = fmtMonto(pendPEN, 'PEN');
+     if (pendUSD > 0) txt += ' · ' + fmtMonto(pendUSD, 'USD');
+     elMontoPend.textContent = txt;
+  }
 }
 
 function poblarFiltroMontos(){
