@@ -622,6 +622,36 @@ async function quitar(id){
   recalcularSaldos(); actualizarStats(); render(); toast('Asignación eliminada','');
 }
 
+async function archivarAbono(id){
+  const p = PAGOS.find(x => x.id === id);
+  if(!p) return;
+  
+  const motivo = prompt("Clasificar ingreso (Ej. Depósito a plazo, Abono incorrecto, Traspaso):");
+  if(!motivo || !motivo.trim()) return; // Si cancelas o dejas en blanco, no hace nada
+  
+  const row = {
+    operacion: String(p.operacion),
+    factura: 'NO_OPERATIVO',
+    razon: motivo.trim(),
+    importe_factura: p.monto,
+    estado: 'confirmado',
+    motivo: 'Clasificación Manual',
+    confianza: 'alta'
+  };
+  
+  const {error} = await db.from('conciliaciones').upsert([row], {onConflict:'operacion,factura'});
+  if(error){ toast('Error: ' + error.message, ''); return; }
+  
+  p.estado = 'confirmado';
+  p.motivo = 'Clasificado: ' + motivo.trim();
+  p.facturas = [{factura: 'NO_OPERATIVO', razon: motivo.trim()}];
+  
+  recalcularSaldos(); 
+  actualizarStats(); 
+  render();
+  toast('Archivado como No Operativo ✓', 'green');
+}
+
 async function eliminarAbono(id){
   const p=PAGOS.find(x=>x.id===id);
   if(!p) return;
