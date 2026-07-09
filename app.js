@@ -945,6 +945,19 @@ const TABLA_CUENTAS = {
     'BNP_444': { banco3: 'BNP', cta_contable: '104111', mon: 'S' }
 };
 
+// ─── 2. EXPORTAR SISTEMA (REGLAS ERP APLICADAS) ─────────────────────────────
+const TABLA_CUENTAS = {
+    'BCP_127': { banco3: 'BCP', cta_contable: '104122', mon: 'D' },
+    'BCP_010': { banco3: 'BCP', cta_contable: '104113', mon: 'S' },
+    'BCP_162': { banco3: 'BCP', cta_contable: '104123', mon: 'D' },
+    'BCP_040': { banco3: 'BCP', cta_contable: '104112', mon: 'S' },
+    'BVA_304': { banco3: 'BVA', cta_contable: '104115', mon: 'S' },
+    'BVA_131': { banco3: 'BVA', cta_contable: '104125', mon: 'D' },
+    'ITB_579': { banco3: 'ITB', cta_contable: '104117', mon: 'S' },
+    'SCT_285': { banco3: 'SCT', cta_contable: '104114', mon: 'S' },
+    'BNP_444': { banco3: 'BNP', cta_contable: '104111', mon: 'S' }
+};
+
 window.exportarSistema = function() {
     const confirmados = PAGOS.filter(p => (p.estado === 'confirmado' || p.estado === 'manual') && p.facturas && p.facturas.some(f => f.factura && f.factura !== 'NO_OPERATIVO'));
     
@@ -956,15 +969,17 @@ window.exportarSistema = function() {
     const datosExportar = [];
 
     confirmados.forEach(p => {
-        // Extraemos banco y cuenta de la glosa
-        const glosaCompleta = String(p.descripcion || p.observacion || '').trim();
-        const partesGlosa = glosaCompleta.split(/\s+/);
+        // La glosa original del libro mayor / banco
+        const glosaMayor = String(p.descripcion || p.observacion || '').trim();
+        
+        // Extracción para buscar en la tabla
+        const partesGlosa = glosaMayor.split(/\s+/);
         const bancoGlosa = partesGlosa[0] ? partesGlosa[0].toUpperCase() : '';
         const cuentaGlosa = partesGlosa[1] ? partesGlosa[1] : '';
         
         const llaveCruce = `${bancoGlosa}_${cuentaGlosa}`;
         const configCta = TABLA_CUENTAS[llaveCruce] || { 
-            banco3: bancoGlosa || 'S/N', 
+            banco3: bancoGlosa.substring(0,3), // Fuerzo a máximo 3 letras
             cta_contable: 'REVISAR', 
             mon: (p.moneda === 'USD' ? 'D' : 'S') 
         };
@@ -976,24 +991,28 @@ window.exportarSistema = function() {
         facturasValidas.forEach(linea => {
             const fDB = FACTURAS.find(x => x.factura === linea.factura) || {};
             
-            // Inyectamos 20 ceros a la izquierda
             let [serieRaw, correlativoRaw] = (linea.factura || '').split('-');
             const serie = (serieRaw || '').trim().padStart(20, '0');
             const correlativo = (correlativoRaw || '').trim().padStart(20, '0');
             
-            // Evaluamos si es Boleta o Factura
             const esBoleta = linea.factura.toUpperCase().startsWith('B');
             const tipoDoc = esBoleta ? '03' : '01';
-            const cuenta6 = esBoleta ? '121203' : '121201';
+            
+            // Si el Excel no trajo cuenta_contable, usa el predeterminado por seguridad
+            const cuenta6_final = fDB.cuenta_contable ? fDB.cuenta_contable : (esBoleta ? '121203' : '121201');
+
+            // REGLA: Exclusión mutua de importes (Soles vs Dólares)
+            const impSoles = configCta.mon === 'S' ? distribuido.toFixed(2) : '';
+            const impDolares = configCta.mon === 'D' ? distribuido.toFixed(2) : '';
 
             datosExportar.push({
                 'Fecha2': p.fecha || '',
                 'cdoccan C(2)': '000',
-                'banco3': configCta.banco3,
+                'banco3': configCta.banco3,            // Regla 1: 3 Letras exactas de la tabla
                 'op': p.operacion || '',
-                'Cta banco': configCta.cta_contable,
+                'Cta banco': configCta.cta_contable,   // Regla 2: La cuenta contable del banco
                 'M*': configCta.mon,
-                'IMPORTE': distribuido.toFixed(2),
+                'IMPORTE': impSoles,                   // Regla 4: Vacío si es Dólares
                 'TC4': fDB.tipo_cambio ? parseFloat(fDB.tipo_cambio).toFixed(4) : '1.0000', 
                 'Cod pago': '003',
                 'tipo doc': tipoDoc,
@@ -1002,12 +1021,12 @@ window.exportarSistema = function() {
                 'Fecha5': fDB.fecha_doc || '',
                 'VENC': fDB.fecha_ven || fDB.fecha_doc || '',
                 'cod identificacion': '01',
-                'RUC': fDB.ruc || '', 
+                'RUC': fDB.ruc || '',                  // Regla 3: RUC inyectado
                 'razon social': fDB.razon_social || '',
                 'Importe documento': (fDB.saldo_original !== undefined ? parseFloat(fDB.saldo_original) : parseFloat(fDB.saldo)).toFixed(2),
-                'dolares': configCta.mon === 'D' ? distribuido.toFixed(2) : '',
-                'cuenta6': cuenta6,
-                'GLOSA7': glosaCompleta 
+                'dolares': impDolares,                 // Regla 4: Vacío si es Soles
+                'cuenta6': cuenta6_final,              // Regla 5: La cuenta contable de tu base (o 121201)
+                'GLOSA7': glosaMayor                   // Regla 6: Glosa original del Mayor de bancos
             });
         });
     });
