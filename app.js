@@ -932,17 +932,17 @@ function exportarCSV(){
 }
 
 
-// ─── 2. EXPORTAR SISTEMA (REGLAS ERP APLICADAS) ─────────────────────────────
+// ─── TABLA DE EQUIVALENCIAS CONTABLES (SÓLO CUENTA) ───
 const TABLA_CUENTAS = {
-    'BCP_127': { banco3: 'BCP', cta_contable: '104122', mon: 'D' },
-    'BCP_010': { banco3: 'BCP', cta_contable: '104113', mon: 'S' },
-    'BCP_162': { banco3: 'BCP', cta_contable: '104123', mon: 'D' },
-    'BCP_040': { banco3: 'BCP', cta_contable: '104112', mon: 'S' },
-    'BVA_304': { banco3: 'BVA', cta_contable: '104115', mon: 'S' },
-    'BVA_131': { banco3: 'BVA', cta_contable: '104125', mon: 'D' },
-    'ITB_579': { banco3: 'ITB', cta_contable: '104117', mon: 'S' },
-    'SCT_285': { banco3: 'SCT', cta_contable: '104114', mon: 'S' },
-    'BNP_444': { banco3: 'BNP', cta_contable: '104111', mon: 'S' }
+    '127': { cta_contable: '104122', mon: 'D' },
+    '010': { cta_contable: '104113', mon: 'S' },
+    '162': { cta_contable: '104123', mon: 'D' },
+    '040': { cta_contable: '104112', mon: 'S' },
+    '304': { cta_contable: '104115', mon: 'S' },
+    '131': { cta_contable: '104125', mon: 'D' },
+    '579': { cta_contable: '104117', mon: 'S' },
+    '285': { cta_contable: '104114', mon: 'S' },
+    '444': { cta_contable: '104111', mon: 'S' }
 };
 
 window.exportarSistema = function() {
