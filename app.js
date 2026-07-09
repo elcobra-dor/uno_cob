@@ -915,40 +915,95 @@ function exportarCSV(){
   toast('CSV exportado ✓','green');
 }
 
-function exportarSistema(){
-  migrarFacturas();
-  const conf=PAGOS.filter(p=>p.estado==='confirmado'||p.estado==='manual');
-  if(!conf.length){ toast('No hay abonos confirmados',''); return; }
-  const header=['ffechacan D','cdoccan C(2)','csercan C(20)','cnumcan C(20)','ccuecan C(20)','cmoncan C(1)','nimporcan N(15,2)','ntipcam N(10,6)','ccodpago C(3)','ccoddoc C(2)','cserie C(20)','cnumero C(20)','ffechadoc D','ffechaven D','ccodenti C(11)','ccodruc C(15)','crazsoc C(100)','nimportes N(15,2)','nimported N(15,2)','ccodcue C(20)','cglosa C(80)','ccodcos C(9)','ccodcos2 C(9)','nporre N(5,2)','nimpperc N(15,2)','nperdenre N(1)','cserre C(6)','cnumre C(13)','ffecre D'];
-  const dataRows=[];
-  conf.forEach(p=>{
-    const facts=(p.facturas||[]).filter(f=>f.factura);
-    const opKey=String(p.operacion).replace(/^0+/,'');
-    const bd=BD_MAP[opKey]||BD_MAP[p.operacion]||null;
-    const sumF=facts.reduce((a,f)=>{ const fd=FACTURAS.find(x=>x.factura===f.factura)||{}; return a+parseFloat(fd.saldo_original||fd.saldo||0); },0);
-    const saldo=Math.round((p.monto-sumF)*100)/100;
-    facts.forEach((f,i)=>{
-      const fd=FACTURAS.find(x=>x.factura===f.factura)||{};
-      const importeFact=fd.saldo_original||fd.saldo||p.monto;
-      const fm=f.factura.match(/([A-Z]\d+)-0*(\d+)/);
-      const serieF=fm?fm[1]:''; const correlF=fm?fm[2].padStart(8,'0'):'';
-      if(bd){ dataRows.push([bd.fecha2,bd.cdoccan,bd.banco3,bd.op,bd.cta,bd.moneda,bd.importe,bd.tc,bd.codpago,bd.tipodoc,bd.serie,bd.correl,bd.fecha5,bd.venc,bd.codid,bd.ruc,bd.razsoc,importeFact,bd.dolares||'',bd.cuenta6,bd.glosa,'','','','','','','','']); }
-      else{ dataRows.push([p.fecha,'0','',p.operacion,'','S',p.monto,'','3','1','0000000000000000'+serieF,correlF.padStart(20,'0'),fd.fecha_doc||'',fd.fecha_ven||'','1','',f.razon||'',importeFact,'','',p.descripcion?.substring(0,80)||'','','','','','','','','']); }
-      if(i===facts.length-1&&saldo>0){
-        const base=bd?[bd.fecha2,bd.cdoccan,bd.banco3,bd.op,bd.cta,bd.moneda,bd.importe,bd.tc,bd.codpago]:[p.fecha,'0','',p.operacion,'','S',p.monto,'','3'];
-        dataRows.push([...base,'','','','','','','','SALDO POR ASIGNAR',saldo,'','',bd?bd.glosa:p.descripcion?.substring(0,80)||'','','','','','','','']);
-      }
-    });
-  });
-  if(!dataRows.length){ toast('Sin facturas asignadas',''); return; }
-  const wb=XLSX.utils.book_new();
-  const ws=XLSX.utils.aoa_to_sheet([header,...dataRows]);
-  ws['!cols']=header.map(()=>({wch:22}));
-  XLSX.utils.book_append_sheet(wb,ws,'Registro_cobranzas');
-  XLSX.writeFile(wb,'Registro_cobranzas_'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'.xlsx');
-  toast('Excel sistema exportado ✓ ('+dataRows.length+' filas)','green');
-}
+// ─── DICCIONARIO DE CUENTAS CONTABLES (Cruce Automático) ───
+const TABLA_CUENTAS = {
+    'BCP_127': { banco3: 'BCP', cta_contable: '104122', mon: 'D' },
+    'BCP_010': { banco3: 'BCP', cta_contable: '104113', mon: 'S' },
+    'BCP_162': { banco3: 'BCP', cta_contable: '104123', mon: 'D' },
+    'BCP_040': { banco3: 'BCP', cta_contable: '104112', mon: 'S' },
+    'BVA_304': { banco3: 'BVA', cta_contable: '104115', mon: 'S' },
+    'BVA_131': { banco3: 'BVA', cta_contable: '104125', mon: 'D' },
+    'ITB_579': { banco3: 'ITB', cta_contable: '104117', mon: 'S' },
+    'SCT_285': { banco3: 'SCT', cta_contable: '104114', mon: 'S' },
+    'BNP_444': { banco3: 'BNP', cta_contable: '104111', mon: 'S' }
+};
 
+window.exportarSistema = function() {
+    const confirmados = PAGOS.filter(p => (p.estado === 'confirmado' || p.estado === 'manual') && p.facturas && p.facturas.some(f => f.factura && f.factura !== 'NO_OPERATIVO'));
+    
+    if (confirmados.length === 0) {
+        alert("No hay abonos confirmados cruzados con facturas para exportar.");
+        return;
+    }
+
+    const datosExportar = [];
+
+    confirmados.forEach(p => {
+        // 1. Escaneo de la Glosa para extraer Banco y Cuenta (Ej: "BCP 010 27/05/2026 04662581")
+        const glosaCompleta = String(p.descripcion || p.observacion || '').trim();
+        const partesGlosa = glosaCompleta.split(/\s+/);
+        const bancoGlosa = partesGlosa[0] ? partesGlosa[0].toUpperCase() : '';
+        const cuentaGlosa = partesGlosa[1] ? partesGlosa[1] : '';
+        
+        // 2. Cruce con la tabla contable
+        const llaveCruce = `${bancoGlosa}_${cuentaGlosa}`;
+        const configCta = TABLA_CUENTAS[llaveCruce] || { 
+            banco3: bancoGlosa || 'S/N', 
+            cta_contable: 'REVISAR', // Alerta si hay un error de tipeo en la glosa
+            mon: (p.moneda === 'USD' ? 'D' : 'S') 
+        };
+
+        const facturasValidas = p.facturas.filter(f => f.factura && f.factura !== 'NO_OPERATIVO');
+        
+        // Sumamos el abono real más la comisión bancaria (si fue absorbida por Culqi/Niubiz)
+        const totalAbono = parseFloat(p.monto) + (p.comisionAceptada ? parseFloat(p.montoComision||0) : 0);
+        let distribuido = facturasValidas.length > 0 ? (totalAbono / facturasValidas.length) : totalAbono;
+
+        facturasValidas.forEach(linea => {
+            const fDB = FACTURAS.find(x => x.factura === linea.factura) || {};
+            
+            // 3. Formateo de Serie y Correlativo a 20 dígitos de longitud
+            let [serie, correlativo] = (linea.factura || '').split('-');
+            serie = (serie || '').trim().padStart(20, '0');
+            correlativo = (correlativo || '').trim().padStart(20, '0');
+            
+            // 4. Detección automática: Boleta (03) vs Factura (01)
+            const esBoleta = linea.factura.toUpperCase().startsWith('B');
+            const tipoDoc = esBoleta ? '03' : '01';
+            const cuenta6 = esBoleta ? '121203' : '121201';
+
+            // 5. Construcción de la fila exacta para el ERP
+            datosExportar.push({
+                'Fecha2': p.fecha || '',
+                'cdoccan C(2)': '000',
+                'banco3': configCta.banco3,
+                'op': p.operacion || '',
+                'Cta banco': configCta.cta_contable,
+                'M*': configCta.mon,
+                'IMPORTE': distribuido.toFixed(2),
+                'TC4': '', 
+                'Cod pago': '003',
+                'tipo doc': tipoDoc,
+                'Serie': serie,
+                'Correlativo': correlativo,
+                'Fecha5': fDB.fecha_doc || '',
+                'VENC': fDB.fecha_ven || fDB.fecha_doc || '',
+                'cod identificacion': '01',
+                'RUC': fDB.ruc || '', 
+                'razon social': fDB.razon_social || '',
+                'Importe documento': (fDB.saldo_original !== undefined ? parseFloat(fDB.saldo_original) : parseFloat(fDB.saldo)).toFixed(2),
+                'dolares': configCta.mon === 'D' ? distribuido.toFixed(2) : '',
+                'cuenta6': cuenta6,
+                'GLOSA7': glosaCompleta 
+            });
+        });
+    });
+
+    const ws = XLSX.utils.json_to_sheet(datosExportar);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Export_ERP");
+    XLSX.writeFile(wb, `Exportacion_Contable.xlsx`);
+};
 function exportarEstado(){
   migrarFacturas();
   const data={};
