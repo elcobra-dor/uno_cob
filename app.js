@@ -219,7 +219,6 @@ async function cargarFacturas(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
-  
   if (!rows.length) { alert('El archivo seleccionado está vacío.'); return; }
   
   const headers = Object.keys(rows[0]);
@@ -231,12 +230,14 @@ async function cargarFacturas(input){
     const n = String(numero || '').trim().replace(/^0+/, '');
     return s && n ? `${s}-${n}` : null;
   }
+
+  function atraparGlosa(r) {
+    return String(r['GLOSA'] || r['Glosa'] || r['glosa'] || r['DESCRIPCION'] || r['Descripcion'] || r['descripcion'] || '').trim();
+  }
   
   let nuevas = [];
   
   if (esContable) {
-    // Columna donde se anotan los últimos 4 dígitos del pago BCP (acepta 'GLOSA', 'GLOSA_BCP', etc.)
-    const colGlosa = headers.find(h => /^glosa/i.test(h));
     const resumenContable = {};
     rows.forEach(r => {
       const codFactura = limpiarDocNum(r['SERIE'], r['NUMERO']);
@@ -244,22 +245,26 @@ async function cargarFacturas(input){
       const monedaDoc = String(r['M_REG'] || 'S').trim().toUpperCase();
       const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
       const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
-      const glosaFila = colGlosa ? String(r[colGlosa] || '').trim() : '';
       
       if (!resumenContable[codFactura] || saldoFila < resumenContable[codFactura].saldo) {
-        const glosaPrevia = resumenContable[codFactura]?.glosa || '';
         resumenContable[codFactura] = {
-          factura: codFactura, razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-          fecha_doc: fmtFecha(r['FECHA_DOC']), fecha_ven: fmtFecha(r['FECHA_VEN']),
-          saldo: saldoFila, mes: parseInt(r['MES']) || 0, moneda: esDolares ? 'USD' : 'PEN',
-          glosa: glosaFila || glosaPrevia
+          factura: codFactura, 
+          razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
+          fecha_doc: fmtFecha(r['FECHA_DOC']), 
+          fecha_ven: fmtFecha(r['FECHA_VEN']),
+          saldo: saldoFila, 
+          mes: parseInt(r['MES']) || 0, 
+          moneda: esDolares ? 'USD' : 'PEN',
+          glosa: atraparGlosa(r),
+          // --- CAPTURA DE TIPO DE CAMBIO ---
+          tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || 0) 
         };
       }
     });
     nuevas = Object.values(resumenContable).filter(f => f.saldo > 0);
     const { error } = await db.from('facturas').upsert(nuevas, { onConflict: 'factura' });
     if (error) { toast('Error BD: ' + error.message, ''); return; }
-    toast(nuevas.length + ' facturas procesadas (Archivo Contable)', 'green');
+    toast(nuevas.length + ' facturas procesadas (Contable)', 'green');
     
   } else if (esComercial) {
     const resumenComercial = {};
@@ -272,8 +277,16 @@ async function cargarFacturas(input){
       
       if (!resumenComercial[codFactura]) {
         resumenComercial[codFactura] = {
-          factura: codFactura, razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-          fecha_doc: fmtFecha(r['FECHA_DOC']), saldo: 0, mes: parseInt(r['MES']) || 0, moneda: esDolaresFila ? 'USD' : 'PEN'
+          factura: codFactura, 
+          razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
+          fecha_doc: fmtFecha(r['FECHA_DOC']), 
+          saldo: 0, 
+          mes: parseInt(r['MES']) || 0, 
+          moneda: esDolaresFila ? 'USD' : 'PEN',
+          glosa: atraparGlosa(r),
+          rubro: String(r['DESC_PROD'] || r['COD_PROD'] || '').trim(),
+          // --- CAPTURA DE TIPO DE CAMBIO ---
+          tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || r['TC'] || 0)
         };
       }
       resumenComercial[codFactura].saldo += totalFila;
@@ -281,11 +294,9 @@ async function cargarFacturas(input){
     nuevas = Object.values(resumenComercial).filter(f => f.saldo > 0);
     const { error } = await db.from('facturas').upsert(nuevas, { onConflict: 'factura' });
     if (error) { toast('Error BD: ' + error.message, ''); return; }
-    toast(nuevas.length + ' facturas procesadas (Archivo Comercial)', 'green');
-    
-  } else {
-    alert('Archivo no reconocido.'); return;
-  }
+    toast(nuevas.length + ' facturas procesadas (Comercial)', 'green');
+  } else { alert('Archivo no reconocido.'); return; }
+  
   await cargarDesdeBD();
 }
 
@@ -928,6 +939,19 @@ const TABLA_CUENTAS = {
     'BNP_444': { banco3: 'BNP', cta_contable: '104111', mon: 'S' }
 };
 
+// ─── DICCIONARIO DE CUENTAS CONTABLES ───
+const TABLA_CUENTAS = {
+    'BCP_127': { banco3: 'BCP', cta_contable: '104122', mon: 'D' },
+    'BCP_010': { banco3: 'BCP', cta_contable: '104113', mon: 'S' },
+    'BCP_162': { banco3: 'BCP', cta_contable: '104123', mon: 'D' },
+    'BCP_040': { banco3: 'BCP', cta_contable: '104112', mon: 'S' },
+    'BVA_304': { banco3: 'BVA', cta_contable: '104115', mon: 'S' },
+    'BVA_131': { banco3: 'BVA', cta_contable: '104125', mon: 'D' },
+    'ITB_579': { banco3: 'ITB', cta_contable: '104117', mon: 'S' },
+    'SCT_285': { banco3: 'SCT', cta_contable: '104114', mon: 'S' },
+    'BNP_444': { banco3: 'BNP', cta_contable: '104111', mon: 'S' }
+};
+
 window.exportarSistema = function() {
     const confirmados = PAGOS.filter(p => (p.estado === 'confirmado' || p.estado === 'manual') && p.facturas && p.facturas.some(f => f.factura && f.factura !== 'NO_OPERATIVO'));
     
@@ -939,40 +963,36 @@ window.exportarSistema = function() {
     const datosExportar = [];
 
     confirmados.forEach(p => {
-        // 1. Escaneo de la Glosa para extraer Banco y Cuenta (Ej: "BCP 010 27/05/2026 04662581")
+        // Extraemos banco y cuenta de la glosa
         const glosaCompleta = String(p.descripcion || p.observacion || '').trim();
         const partesGlosa = glosaCompleta.split(/\s+/);
         const bancoGlosa = partesGlosa[0] ? partesGlosa[0].toUpperCase() : '';
         const cuentaGlosa = partesGlosa[1] ? partesGlosa[1] : '';
         
-        // 2. Cruce con la tabla contable
         const llaveCruce = `${bancoGlosa}_${cuentaGlosa}`;
         const configCta = TABLA_CUENTAS[llaveCruce] || { 
             banco3: bancoGlosa || 'S/N', 
-            cta_contable: 'REVISAR', // Alerta si hay un error de tipeo en la glosa
+            cta_contable: 'REVISAR', 
             mon: (p.moneda === 'USD' ? 'D' : 'S') 
         };
 
         const facturasValidas = p.facturas.filter(f => f.factura && f.factura !== 'NO_OPERATIVO');
-        
-        // Sumamos el abono real más la comisión bancaria (si fue absorbida por Culqi/Niubiz)
         const totalAbono = parseFloat(p.monto) + (p.comisionAceptada ? parseFloat(p.montoComision||0) : 0);
         let distribuido = facturasValidas.length > 0 ? (totalAbono / facturasValidas.length) : totalAbono;
 
         facturasValidas.forEach(linea => {
             const fDB = FACTURAS.find(x => x.factura === linea.factura) || {};
             
-            // 3. Formateo de Serie y Correlativo a 20 dígitos de longitud
-            let [serie, correlativo] = (linea.factura || '').split('-');
-            serie = (serie || '').trim().padStart(20, '0');
-            correlativo = (correlativo || '').trim().padStart(20, '0');
+            // Inyectamos 20 ceros a la izquierda
+            let [serieRaw, correlativoRaw] = (linea.factura || '').split('-');
+            const serie = (serieRaw || '').trim().padStart(20, '0');
+            const correlativo = (correlativoRaw || '').trim().padStart(20, '0');
             
-            // 4. Detección automática: Boleta (03) vs Factura (01)
+            // Evaluamos si es Boleta o Factura
             const esBoleta = linea.factura.toUpperCase().startsWith('B');
             const tipoDoc = esBoleta ? '03' : '01';
             const cuenta6 = esBoleta ? '121203' : '121201';
 
-            // 5. Construcción de la fila exacta para el ERP
             datosExportar.push({
                 'Fecha2': p.fecha || '',
                 'cdoccan C(2)': '000',
@@ -981,7 +1001,7 @@ window.exportarSistema = function() {
                 'Cta banco': configCta.cta_contable,
                 'M*': configCta.mon,
                 'IMPORTE': distribuido.toFixed(2),
-                'TC4': '', 
+                'TC4': fDB.tipo_cambio ? parseFloat(fDB.tipo_cambio).toFixed(4) : '1.0000', 
                 'Cod pago': '003',
                 'tipo doc': tipoDoc,
                 'Serie': serie,
