@@ -926,18 +926,6 @@ function exportarCSV(){
   toast('CSV exportado ✓','green');
 }
 
-// ─── DICCIONARIO DE CUENTAS CONTABLES (Cruce Automático) ───
-const TABLA_CUENTAS = {
-    'BCP_127': { banco3: 'BCP', cta_contable: '104122', mon: 'D' },
-    'BCP_010': { banco3: 'BCP', cta_contable: '104113', mon: 'S' },
-    'BCP_162': { banco3: 'BCP', cta_contable: '104123', mon: 'D' },
-    'BCP_040': { banco3: 'BCP', cta_contable: '104112', mon: 'S' },
-    'BVA_304': { banco3: 'BVA', cta_contable: '104115', mon: 'S' },
-    'BVA_131': { banco3: 'BVA', cta_contable: '104125', mon: 'D' },
-    'ITB_579': { banco3: 'ITB', cta_contable: '104117', mon: 'S' },
-    'SCT_285': { banco3: 'SCT', cta_contable: '104114', mon: 'S' },
-    'BNP_444': { banco3: 'BNP', cta_contable: '104111', mon: 'S' }
-};
 
 // ─── DICCIONARIO DE CUENTAS CONTABLES ───
 const TABLA_CUENTAS = {
