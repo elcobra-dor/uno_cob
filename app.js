@@ -214,6 +214,7 @@ async function cargarDesdeBD(){
 }
 
 // ─── CARGA DE ARCHIVOS ───────────────────────────────────────────────────────
+// ─── 1. CARGAR FACTURAS (CON CAPTURA DE RUC Y CUENTA CONTABLE) ───────────────
 async function cargarFacturas(input){
   if (!input.files || input.files.length === 0) return;
   const wb = await leerExcel(input.files[0]);
@@ -256,8 +257,10 @@ async function cargarFacturas(input){
           mes: parseInt(r['MES']) || 0, 
           moneda: esDolares ? 'USD' : 'PEN',
           glosa: atraparGlosa(r),
-          // --- CAPTURA DE TIPO DE CAMBIO ---
-          tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || 0) 
+          tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || 0),
+          // --- NUEVO: CAPTURAMOS RUC Y CUENTA 6 ---
+          ruc: String(r['RUC'] || r['Ruc'] || r['ruc'] || '').trim(),
+          cuenta_contable: String(r['CUENTA'] || r['CTA'] || r['CUENTA_CONTABLE'] || r['cuenta6'] || '').trim()
         };
       }
     });
@@ -285,8 +288,10 @@ async function cargarFacturas(input){
           moneda: esDolaresFila ? 'USD' : 'PEN',
           glosa: atraparGlosa(r),
           rubro: String(r['DESC_PROD'] || r['COD_PROD'] || '').trim(),
-          // --- CAPTURA DE TIPO DE CAMBIO ---
-          tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || r['TC'] || 0)
+          tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || r['TC'] || 0),
+          // --- NUEVO: CAPTURAMOS RUC Y CUENTA 6 ---
+          ruc: String(r['RUC'] || r['Ruc'] || r['ruc'] || '').trim(),
+          cuenta_contable: String(r['CUENTA'] || r['CTA'] || r['CUENTA_CONTABLE'] || r['cuenta6'] || '').trim()
         };
       }
       resumenComercial[codFactura].saldo += totalFila;
