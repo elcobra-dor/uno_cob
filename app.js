@@ -451,8 +451,7 @@ async function corregirGlosasExistentes(input) {
   const ws = wb.Sheets[wb.SheetNames[0]];
   const data = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
 
-  // Detectar fila de headers igual que en la rama genérica del Libro Mayor
-  let headerIdx = 0; // ajusta si tu detección de headerIdx es distinta en cargarBancario
+  let headerIdx = 0;
   const headersRaw = data[headerIdx].map(h => String(h).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
   
   const colOp = headersRaw.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('numero')));
@@ -461,7 +460,8 @@ async function corregirGlosasExistentes(input) {
 
   if (opIndex === -1 || colGlosa === -1) { alert('No se encontraron columnas Operación o Glosa.'); return; }
 
-  let actualizados = 0, errores = 0;
+  let actualizados = 0, sinMatch = 0, errores = 0;
+  const opsSinMatch = [];
 
   for (let i = headerIdx + 1; i < data.length; i++) {
     const r = data[i]; if (!r || r.length === 0) continue;
@@ -469,13 +469,19 @@ async function corregirGlosasExistentes(input) {
     const glosaVal = String(r[colGlosa] || '').trim();
     if (!opVal || !glosaVal) continue;
 
-    const { error } = await db.from('abonos').update({ glosa: glosaVal }).eq('operacion', opVal);
-    if (error) { errores++; console.error(opVal, error.message); } else { actualizados++; }
+    const { data: filasActualizadas, error } = await db.from('abonos')
+      .update({ glosa: glosaVal })
+      .eq('operacion', opVal)
+      .select('operacion'); // <-- clave: esto obliga a Supabase a devolver las filas realmente afectadas
+
+    if (error) { errores++; console.error(opVal, error.message); }
+    else if (!filasActualizadas || filasActualizadas.length === 0) { sinMatch++; opsSinMatch.push(opVal); }
+    else { actualizados++; }
   }
 
-  toast(`Glosas corregidas: ${actualizados} (errores: ${errores})`, actualizados ? 'green' : '');
+  console.log('Operaciones sin match en la BD:', opsSinMatch);
+  toast(`Corregidas: ${actualizados} | Sin match: ${sinMatch} | Errores: ${errores}`, actualizados ? 'green' : 'amber');
 }
-
 async function cargarInter(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
