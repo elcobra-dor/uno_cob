@@ -248,6 +248,32 @@
         <div class="file-label">Banco BD</div>
         <div class="file-status" id="status-bd">Opcional</div>
       </label>
+      <label class="file-slot" id="slot-bancos" for="inp-bancos">
+        <input type="file" id="inp-bancos" accept=".xlsx,.xls" onchange="cargarBancos(this)" style="display:none">
+        <span class="file-icon">🏦</span>
+        <div class="file-label">Bancos</div>
+        <div class="file-status" id="status-bancos">Click para seleccionar</div>
+      </label>
+      <label class="file-slot optional" id="slot-inter" for="inp-inter">
+        <input type="file" id="inp-inter" accept=".xlsx,.xls" onchange="cargarInter(this)" style="display:none">
+        <span class="file-icon">🔁</span>
+        <div class="file-label">Interbancarios</div>
+        <div class="file-status" id="status-inter">Opcional</div>
+      </label>
+      <label class="file-slot optional" id="slot-bd" for="inp-bd">
+        <input type="file" id="inp-bd" accept=".xlsx,.xls" onchange="cargarBD(this)" style="display:none">
+        <span class="file-icon">📋</span>
+        <div class="file-label">Banco BD</div>
+        <div class="file-status" id="status-bd">Opcional</div>
+      </label>
+      <!-- INPUT TEMPORAL: corrección de glosas existentes, quitar después de usar -->
+      <label class="file-slot optional" id="slot-fix-glosa" for="inp-fix-glosa">
+        <input type="file" id="inp-fix-glosa" accept=".xlsx,.xls" onchange="corregirGlosasExistentes(this)" style="display:none">
+        <span class="file-icon">🛠️</span>
+        <div class="file-label">Fix Glosas (temporal)</div>
+        <div class="file-status" id="status-fix-glosa">Click para corregir</div>
+      </label>
+    </div>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center">
       <button class="btn" onclick="hideUpload()">Cerrar</button>
