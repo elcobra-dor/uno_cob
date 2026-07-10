@@ -233,7 +233,7 @@ async function cargarFacturas(input){
   }
 
   function atraparGlosa(r) {
-    return String(r['GLOSA'] || r['Glosa'] || r['glosa'] || r['DESCRIPCION'] || r['Descripcion'] || r['descripcion'] || '').trim();
+    return String(r['GLOSA'] || r['Glosa'] || r['glosa'] || r['DESCRIPCION'] || r['Descripcion'] || '').trim();
   }
   
   let nuevas = [];
@@ -258,9 +258,9 @@ async function cargarFacturas(input){
           moneda: esDolares ? 'USD' : 'PEN',
           glosa: atraparGlosa(r),
           tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || 0),
-          // --- NUEVO: CAPTURAMOS RUC Y CUENTA 6 ---
-          ruc: String(r['RUC'] || r['Ruc'] || r['ruc'] || '').trim(),
-          cuenta_contable: String(r['CUENTA'] || r['CTA'] || r['CUENTA_CONTABLE'] || r['cuenta6'] || '').trim()
+          // LECTURA EXACTA DE TUS CABECERAS
+          ruc: String(r['RUC'] || '').trim(),
+          cuenta_contable: String(r['CUENTA'] || '').trim()
         };
       }
     });
@@ -289,9 +289,8 @@ async function cargarFacturas(input){
           glosa: atraparGlosa(r),
           rubro: String(r['DESC_PROD'] || r['COD_PROD'] || '').trim(),
           tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || r['TC'] || 0),
-          // --- NUEVO: CAPTURAMOS RUC Y CUENTA 6 ---
-          ruc: String(r['RUC'] || r['Ruc'] || r['ruc'] || '').trim(),
-          cuenta_contable: String(r['CUENTA'] || r['CTA'] || r['CUENTA_CONTABLE'] || r['cuenta6'] || '').trim()
+          ruc: String(r['RUC'] || '').trim(),
+          cuenta_contable: String(r['CUENTA'] || '').trim()
         };
       }
       resumenComercial[codFactura].saldo += totalFila;
@@ -304,7 +303,6 @@ async function cargarFacturas(input){
   
   await cargarDesdeBD();
 }
-
 async function cargarBancos(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
