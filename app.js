@@ -446,6 +446,36 @@ async function cargarBancos(input){
   document.getElementById('status-bancos').textContent = nuevos.length + ' ing. · ' + egresosRaw.length + ' egr. (' + monedaBanco + ')';
 }
 
+async function corregirGlosasExistentes(input) {
+  const wb = await leerExcel(input.files[0]);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
+
+  // Detectar fila de headers igual que en la rama genérica del Libro Mayor
+  let headerIdx = 0; // ajusta si tu detección de headerIdx es distinta en cargarBancario
+  const headersRaw = data[headerIdx].map(h => String(h).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
+  
+  const colOp = headersRaw.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('numero')));
+  const opIndex = colOp !== -1 ? colOp : headersRaw.findIndex(h => h.includes('operaci'));
+  const colGlosa = headersRaw.findIndex(h => h.includes('glosa'));
+
+  if (opIndex === -1 || colGlosa === -1) { alert('No se encontraron columnas Operación o Glosa.'); return; }
+
+  let actualizados = 0, errores = 0;
+
+  for (let i = headerIdx + 1; i < data.length; i++) {
+    const r = data[i]; if (!r || r.length === 0) continue;
+    const opVal = String(r[opIndex] || '').trim();
+    const glosaVal = String(r[colGlosa] || '').trim();
+    if (!opVal || !glosaVal) continue;
+
+    const { error } = await db.from('abonos').update({ glosa: glosaVal }).eq('operacion', opVal);
+    if (error) { errores++; console.error(opVal, error.message); } else { actualizados++; }
+  }
+
+  toast(`Glosas corregidas: ${actualizados} (errores: ${errores})`, actualizados ? 'green' : '');
+}
+
 async function cargarInter(input){
   const wb = await leerExcel(input.files[0]);
   const ws = wb.Sheets[wb.SheetNames[0]];
