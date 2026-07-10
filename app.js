@@ -393,7 +393,8 @@ async function cargarBancos(input){
   } else {
     const headers = rawData[headerIdx].map(h => String(h).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
     const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta'));
-    const colDesc = headers.findIndex(h => h.includes('descripci') || h.includes('glosa'));
+    const colDesc = headers.findIndex(h => h.includes('descripci'));
+    const colGlosa = headers.findIndex(h => h.includes('glosa'));
     const colMonto = headers.findIndex(h => /^monto$/.test(h) || h.includes('importe'));
     const colOp = headers.findIndex(h => h.includes('operaci') && (h.includes('n.m') || h.includes('nro') || h.includes('numero')));
     const colRef2 = headers.findIndex(h => h.includes('referencia2'));
@@ -421,8 +422,9 @@ async function cargarBancos(input){
       }
       if(monedaFila==='USD') contUSD++; else contPEN++;
 
-      const obj = {
+     const obj = {
         operacion: opVal, fecha: fmtFecha(r[colFecha] || ''), descripcion: colDesc !== -1 ? String(r[colDesc]).trim() : '',
+        glosa: colGlosa !== -1 ? String(r[colGlosa]).trim() : '',
         referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '', ordenante: ordVal, moneda: monedaFila
       };
 
