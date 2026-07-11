@@ -1,0 +1,6 @@
+{
+  "name": "CAPECO - Sistema de Conciliación Bancaria",
+  "description": "Sistema de conciliación bancaria inteligente, gestión de cuentas por cobrar, egresos y reportes estadísticos para la Cámara Peruana de la Construcción.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
