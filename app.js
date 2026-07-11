@@ -976,8 +976,10 @@ const TABLA_CUENTAS = {
     '040': { cta_contable: '104112', mon: 'S' },
     '304': { cta_contable: '104115', mon: 'S' },
     '131': { cta_contable: '104125', mon: 'D' },
+    '679': { cta_contable: '104117', mon: 'S' },
     '579': { cta_contable: '104117', mon: 'S' },
     '285': { cta_contable: '104114', mon: 'S' },
+    '897': { cta_contable: '104111', mon: 'S' },
     '444': { cta_contable: '104111', mon: 'S' }
 };
 
