@@ -38,8 +38,10 @@ const TABLA_CUENTAS: { [key: string]: { cta_contable: string; mon: 'S' | 'D' } }
   '304': { cta_contable: '104115', mon: 'S' },
   '131': { cta_contable: '104125', mon: 'D' },
   '579': { cta_contable: '104117', mon: 'S' },
+  '679': { cta_contable: '104117', mon: 'S' }, // <-- Interbank Nuevo
   '285': { cta_contable: '104114', mon: 'S' },
-  '444': { cta_contable: '104111', mon: 'S' }
+  '444': { cta_contable: '104111', mon: 'S' },
+  '897': { cta_contable: '104111', mon: 'S' }  // <-- Banco de la Nación Nuevo
 };
 
 export default function App() {
@@ -1025,8 +1027,13 @@ export default function App() {
     confirmados.forEach(p => {
       const glosaMayor = String(p.glosa || p.descripcion || '').trim();
       const partesGlosa = glosaMayor.split(/\s+/);
-      const bancoTresLetras = partesGlosa[0] ? partesGlosa[0].toUpperCase().substring(0, 3) : '';
-      const cuentaTresDigitos = partesGlosa[1] ? partesGlosa[1].substring(0, 3) : '';
+      
+      // EXTRACCIÓN BLINDADA ANTI-BASURA: Solo letras para banco, solo números para cuenta
+      const bancoBruto = partesGlosa[0] ? partesGlosa[0].replace(/[^A-Za-z]/g, '') : '';
+      const bancoTresLetras = bancoBruto.toUpperCase().substring(0, 3);
+      
+      const cuentaBruta = partesGlosa[1] ? partesGlosa[1].replace(/\D/g, '') : '';
+      const cuentaTresDigitos = cuentaBruta.substring(0, 3);
 
       const configCta = TABLA_CUENTAS[cuentaTresDigitos] || {
         cta_contable: 'REVISAR',
@@ -1082,7 +1089,7 @@ export default function App() {
     XLSX.writeFile(wb, `Exportacion_Contable_CAPECO.xlsx`);
     showToast('Planilla ERP descargada ✓', 'green');
   };
-
+  
   const handleExportarEstadoBackup = () => {
     const data: { [key: string]: any } = {};
     abonos.filter(p => p.estado === 'confirmado' || p.estado === 'manual').forEach(p => {
