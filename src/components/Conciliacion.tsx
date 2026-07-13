@@ -243,13 +243,38 @@ export default function Conciliacion({
             const esBN = esAbonoDetraccionBN(p);
             const esNoOperativo = p.facturas?.[0]?.factura === 'NO_OPERATIVO';
 
-            // Filter valid invoices for dropdown
-            const facturasOpciones = facturas.filter(f => {
-              if (f.saldo <= 0.01) return false;
-              const mismaMoneda = (f.moneda === 'USD' ? 'USD' : 'PEN') === pMoneda;
-              const excepcionDetraccion = esBN && f.moneda === 'USD' && requiereDetraccionPEN(f);
-              return mismaMoneda || excepcionDetraccion;
-            });
+            // --- CEREBRO PREDICTIVO: FRANCOTIRADOR + ORDENAMIENTO ---
+            const CUOTAS_ESTANDAR = [1980, 1270, 910, 530, 500, 410, 860];
+            const esPagoEstandar = CUOTAS_ESTANDAR.includes(p.monto);
+
+            const facturasOpciones = facturas
+              .filter(f => {
+                if (f.saldo <= 0.01) return false;
+                const mismaMoneda = (f.moneda === 'USD' ? 'USD' : 'PEN') === pMoneda;
+                const excepcionDetraccion = esBN && f.moneda === 'USD' && requiereDetraccionPEN(f);
+                if (!mismaMoneda && !excepcionDetraccion) return false;
+
+                // Capa 1: Filtro Francotirador (Si el abono es cuota estándar, ocultamos las demás)
+                if (esPagoEstandar && f.saldo !== p.monto) {
+                  return false;
+                }
+                
+                return true;
+              })
+              .sort((a, b) => {
+                // Capa 3: Ordenamiento en Cascada
+                // 1. Alfabético por Razón Social
+                const ordenNombre = (a.razon_social || '').localeCompare(b.razon_social || '');
+                if (ordenNombre !== 0) return ordenNombre;
+
+                // 2. Cronológico (Deuda más antigua primero)
+                const fechaA = new Date(a.fecha_doc || 0).getTime();
+                const fechaB = new Date(b.fecha_doc || 0).getTime();
+                if (fechaA !== fechaB) return fechaA - fechaB;
+
+                // 3. Correlativo
+                return (a.factura || '').localeCompare(b.factura || '');
+              });
 
             // Find selected invoice in state for detracción warning
             const facturaElegida = p.facturas?.length > 0 
@@ -321,7 +346,7 @@ export default function Conciliacion({
                             {facturasOpciones.map(f => {
                               const esExcepcion = esBN && f.moneda === 'USD' && requiereDetraccionPEN(f);
                               const esDetNormal = !esExcepcion && requiereDetraccionPEN(f);
-                              const marca = esExcepcion ? '⚠ USD→revisar — ' : (esDetNormal ? '🧾 Detracc. — ' : '');
+                              const marca = esExcepcion ? '⚠ ' : (esDetNormal ? '🧾 ' : '');
                               const originalMonto = f.saldo_original !== undefined ? f.saldo_original : f.saldo;
                               let labelMonto = fmtMonto(originalMonto, f.moneda);
                               
@@ -329,9 +354,19 @@ export default function Conciliacion({
                                 labelMonto += ` (Resta ${fmtMonto(f.saldo, f.moneda)})`;
                               }
 
+                              // Capa 2: Traductor de fecha a Etiqueta de Mes
+                              let etiquetaMes = '';
+                              if (f.fecha_doc) {
+                                const partes = f.fecha_doc.split('-');
+                                if (partes.length >= 2) {
+                                  const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+                                  etiquetaMes = `[${meses[parseInt(partes[1]) - 1]}-${partes[0]}] `;
+                                }
+                              }
+
                               return (
                                 <option key={f.factura} value={f.factura}>
-                                  {marca}{f.factura} — {labelMonto} — {f.razon_social.slice(0, 32)}
+                                  {etiquetaMes}{marca}{f.razon_social.slice(0, 32)} — {f.factura} — {labelMonto}
                                 </option>
                               );
                             })}
