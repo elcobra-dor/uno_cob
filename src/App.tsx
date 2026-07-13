@@ -523,6 +523,7 @@ export default function App() {
     };
 
     let nuevas: any[] = [];
+    let nuevasComercial: any[] = [];
 
     if (esContable) {
       const resumenContable: { [key: string]: any } = {};
@@ -550,41 +551,73 @@ export default function App() {
         }
       });
       nuevas = Object.values(resumenContable).filter(f => f.saldo > 0);
-    } else if (esComercial) {
-      const resumenComercial: { [key: string]: any } = {};
-      rows.forEach(r => {
-        const codFactura = limpiarDocNum(r['SERIE_DOC'], r['NUMERO_DOC']);
-        if (!codFactura) return;
-        const totalFila = parseFloat(r['TOTAL'] || 0);
-        const monedaRaw = String(r['MONEDA'] || r['M_REG'] || r['TIPO_MONEDA'] || 'S').trim().toUpperCase();
-        const esDolaresFila = (monedaRaw === 'D' || monedaRaw === 'USD' || monedaRaw === 'DOLARES');
 
-        if (!resumenComercial[codFactura]) {
-          resumenComercial[codFactura] = {
-            factura: codFactura,
-            razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-            fecha_doc: fmtFecha(r['FECHA_DOC']),
-            saldo: 0,
-            mes: parseInt(r['MES']) || 0,
-            moneda: esDolaresFila ? 'USD' : 'PEN',
-            glosa: atraparGlosa(r),
-            rubro: String(r['DESC_PROD'] || r['COD_PROD'] || '').trim(),
-            tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || r['TC'] || 0),
-            ruc: String(r['RUC'] || '').trim(),
-            cuenta_contable: String(r['CUENTA'] || '').trim()
-          };
-        }
-        resumenComercial[codFactura].saldo += totalFila;
-      });
-      nuevas = Object.values(resumenComercial).filter(f => f.saldo > 0);
+      const { error } = await supabase.from('facturas').upsert(nuevas, { onConflict: 'factura' });
+      if (error) throw error;
+      showToast(`Procesadas ${nuevas.length} facturas con éxito.`, 'green');
+
+    } else if (esComercial) {
+      // FIX: el archivo comercial NUNCA debe tocar la tabla `facturas` (la de cobranza).
+      // Ese archivo no tiene concepto de "saldo pendiente" (solo TOTAL de venta), así que
+      // insertar/actualizar ahí resucitaba facturas ya canceladas como si tuvieran saldo,
+      // y además podía sobrescribir RUC/razón social con datos vacíos de ese archivo.
+      // Ahora se guarda línea por línea (una factura puede tener 2+ líneas de producto)
+      // en una tabla separada, exclusiva para reportes de producto/rubro de ingreso.
+      nuevasComercial = rows.map(r => {
+        const codFactura = limpiarDocNum(r['SERIE_DOC'], r['NUMERO_DOC']);
+        return {
+          periodo: parseInt(r['PERIODO']) || null,
+          mes: parseInt(r['MES']) || null,
+          fecha_doc: fmtFecha(r['FECHA_DOC']),
+          ruc: String(r['RUC'] || '').trim(),
+          razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
+          cod_entidad: String(r['COD_ENTIDAD'] || '').trim(),
+          desc_entidad: String(r['DESC_ENTIDAD'] || '').trim(),
+          cod_almacen: String(r['COD_ALMACEN'] || '').trim(),
+          desc_almacen: String(r['DESC_ALMACEN'] || '').trim(),
+          c_costos: String(r['C_COSTOS'] || '').trim(),
+          desc_c_costos: String(r['DESC_C_COSTOS'] || '').trim(),
+          c_costos_2: String(r['C_COSTOS_2'] || '').trim(),
+          desc_c_costos_2: String(r['DESC_C_COSTOS_2'] || '').trim(),
+          cod_mov: String(r['COD_MOV'] || '').trim(),
+          desc_mov: String(r['DESC_MOV'] || '').trim(),
+          doc: String(r['DOC'] || '').trim(),
+          desc_doc: String(r['DESC_DOC'] || '').trim(),
+          serie_doc: String(r['SERIE_DOC'] || '').trim(),
+          numero_doc: String(r['NUMERO_DOC'] || '').trim(),
+          factura: codFactura,
+          cod_prod: String(r['COD_PROD'] || '').trim(),
+          desc_prod: String(r['DESC_PROD'] || '').trim(),
+          cod_lote: String(r['COD_LOTE'] || '').trim(),
+          fecha_venc_lote: fmtFecha(r['FECHA_VENC_LOTE']),
+          cod_laborat: String(r['COD_LABORAT'] || '').trim(),
+          cod_medida: String(r['COD_MEDIDA'] || '').trim(),
+          desc_medida: String(r['DESC_MEDIDA'] || '').trim(),
+          cod_familia: String(r['COD_FAMILIA'] || '').trim(),
+          desc_familia: String(r['DESC_FAMILIA'] || '').trim(),
+          neto: parseFloat(r['NETO'] || 0),
+          igv: parseFloat(r['IGV'] || 0),
+          inafecto: parseFloat(r['INAFECTO'] || 0),
+          exonerado: parseFloat(r['EXONERADO'] || 0),
+          isc: parseFloat(r['ISC'] || 0),
+          total: parseFloat(r['TOTAL'] || 0),
+          cantidad: parseFloat(r['CANTIDAD'] || 0),
+          valor_unitario: parseFloat(r['VALOR_UNITARIO'] || 0),
+          precio_unitario: parseFloat(r['PRECIO_UNITARIO'] || 0),
+          valor_venta: parseFloat(r['VALOR_VENTA'] || 0),
+          precio_venta: parseFloat(r['PRECIO_VENTA'] || 0),
+          vendedor: String(r['VENDEDOR'] || '').trim()
+        };
+      }).filter(f => f.factura);
+
+      const { error } = await supabase.from('facturas_comercial').insert(nuevasComercial);
+      if (error) throw error;
+      showToast(`Procesadas ${nuevasComercial.length} líneas comerciales con éxito (solo reportes, no afecta cobranza).`, 'green');
+
     } else {
       alert('Archivo de facturas no reconocido. Verifica las cabeceras.');
       return;
     }
-
-    const { error } = await supabase.from('facturas').upsert(nuevas, { onConflict: 'factura' });
-    if (error) throw error;
-    showToast(`Procesadas ${nuevas.length} facturas con éxito.`, 'green');
   };
 
   const handleCargarBancos = async (file: File) => {
@@ -1083,8 +1116,18 @@ export default function App() {
         const tipoDoc = esBoleta ? '03' : '01';
         const cuenta6_final = fDB.cuenta_contable ? fDB.cuenta_contable : (esBoleta ? '121203' : '121201');
 
-        const impSoles = configCta.mon === 'S' ? montoAplicado.toFixed(2) : '';
-        const impDolares = configCta.mon === 'D' ? montoAplicado.toFixed(2) : '';
+        // FIX #2: la moneda que decide el reparto entre "Importe documento" (soles)
+        // y "dolares" es la moneda REAL del abono (p.moneda), no la moneda de la
+        // cuenta bancaria (configCta.mon) — ambas suelen coincidir, pero la fuente
+        // correcta del dato es el pago, no la cuenta.
+        const pagoEsDolares = p.moneda === 'USD';
+        const montoAplicadoStr = montoAplicado.toFixed(2);
+
+        // IMPORTE (col 7) siempre lleva el monto realmente abonado, sin condicionar por moneda.
+        // Ese mismo monto se replica en Importe documento (col 18) si el pago es en soles,
+        // o en dolares (col 19) si el pago es en dólares; la columna que no aplica queda vacía.
+        const impSoles = !pagoEsDolares ? montoAplicadoStr : '';
+        const impDolares = pagoEsDolares ? montoAplicadoStr : '';
 
         datosExportar.push({
           'Fecha2': p.fecha || '',
@@ -1093,7 +1136,7 @@ export default function App() {
           'op': p.operacion || '',
           'Cta banco': configCta.cta_contable,
           'M*': configCta.mon,
-          'IMPORTE': impSoles,
+          'IMPORTE': montoAplicadoStr,
           'TC4': fDB.tipo_cambio ? parseFloat(String(fDB.tipo_cambio)).toFixed(4) : '1.0000',
           'Cod pago': '003',
           'tipo doc': tipoDoc,
@@ -1104,7 +1147,7 @@ export default function App() {
           'cod identificacion': '01',
           'RUC': fDB.ruc || '',
           'razon social': fDB.razon_social || '',
-          'Importe documento': (fDB.saldo_original !== undefined ? parseFloat(String(fDB.saldo_original)) : parseFloat(String(fDB.saldo))).toFixed(2),
+          'Importe documento': impSoles,
           'dolares': impDolares,
           'cuenta6': cuenta6_final,
           'GLOSA7': glosaMayor
