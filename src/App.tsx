@@ -789,8 +789,11 @@ export default function App() {
                 moneda: monedaFila
               };
 
-              if (montoVal > 0) nuevos.push({ ...obj, monto: montoVal });
-              else egresosRaw.push({ operacion: obj.operacion, fecha: obj.fecha, descripcion: obj.descripcion, glosa: obj.glosa, referencia2: obj.referencia2, moneda: obj.moneda, monto: Math.abs(montoVal), estado: 'pendiente' });
+              if (montoVal > 0) {
+                  nuevos.push({ ...obj, monto: montoVal });
+              } else {
+                  egresosRaw.push({ ...obj, monto: Math.abs(montoVal), estado: 'pendiente' });
+              }
             }
           }
 
