@@ -763,7 +763,12 @@ export default function App() {
               if (valorFactura === 'FDC' || valorFactura.includes('FDC') || valorEstado.includes('FDC')) continue;
 
               const montoVal = limpiarMonto(r[colMonto]);
-              const opVal = String(r[opIndex] || '').trim();
+              let opVal = String(r[opIndex] || '').trim();
+              // Blindaje para operaciones genéricas del banco (BATCH)
+              if (opVal === '00000000' || opVal === '000-000' || opVal === '0') {
+              const fechaParaId = String(r[colFecha] || '').replace(/\D/g, '');
+              opVal = `BATCH-${fechaParaId}-${i}`;
+              }
               if (!opVal || montoVal === 0) continue;
               const ordVal = colOrd !== -1 ? String(r[colOrd] || '').trim() : '';
 
