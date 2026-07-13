@@ -235,20 +235,27 @@ export default function App() {
   }, [userAuthenticated, cargarDesdeBD]);
 
   // 3. Reconciliation Actions
+  // FIX #1: calcula el importe realmente aplicado a cada factura (cobro parcial),
+  // en vez de guardar el saldo_original completo de la factura en cada línea.
   const handleConfirmar = async (id: number) => {
     const p = abonos.find(x => x.id === id);
     if (!p || !p.facturas.some(f => f.factura)) return;
 
     try {
+      let disponible = p.monto;
       const rows = p.facturas
         .filter(f => f.factura)
         .map(f => {
           const originalFac = facturas.find(x => x.factura === f.factura);
+          const saldoFactura = originalFac?.saldo ?? originalFac?.saldo_original ?? disponible;
+          const cobro = Math.round(Math.min(disponible, saldoFactura) * 100) / 100;
+          disponible = Math.round((disponible - cobro) * 100) / 100;
+
           return {
             operacion: String(p.operacion),
             factura: f.factura,
             razon: f.razon || '',
-            importe_factura: originalFac?.saldo_original || p.monto,
+            importe_factura: cobro,
             estado: 'confirmado',
             motivo: p.motivo || '',
             confianza: p.confianza || ''
@@ -798,11 +805,16 @@ export default function App() {
           }
 
           // Inserción en Supabase
-          const { error: abonosErr } = await supabase.from('abonos').upsert(nuevos, { onConflict: 'operacion', ignoreDuplicates: true });
+          // FIX #2: se quitó `ignoreDuplicates: true`. Con ese flag, si el número de operación
+          // ya existía en la tabla `abonos`, Supabase IGNORABA la fila nueva y nunca actualizaba
+          // banco/glosa/descripcion, aunque volvieras a subir el Libro Mayor corregido.
+          // El estado de conciliación vive aparte, en la tabla `conciliaciones`, así que
+          // actualizar `abonos` aquí es seguro y no borra conciliaciones ya confirmadas.
+          const { error: abonosErr } = await supabase.from('abonos').upsert(nuevos, { onConflict: 'operacion' });
           if (abonosErr) throw abonosErr;
 
           if (egresosRaw.length) {
-            const { error: egrErr } = await supabase.from('egresos').upsert(egresosRaw, { onConflict: 'operacion', ignoreDuplicates: true });
+            const { error: egrErr } = await supabase.from('egresos').upsert(egresosRaw, { onConflict: 'operacion' });
             if (egrErr) throw egrErr;
           }
 
@@ -1050,10 +1062,20 @@ export default function App() {
 
       const facturasValidas = p.facturas.filter(f => f.factura && f.factura !== 'NO_OPERATIVO');
       const totalAbono = p.monto;
-      let distribuido = facturasValidas.length > 0 ? (totalAbono / facturasValidas.length) : totalAbono;
+      // FIX #1 (fallback): solo se usa el reparto parejo si por algún motivo la línea
+      // no trae un importe_factura guardado (ej. registros antiguos/backups viejos).
+      const distribuido = facturasValidas.length > 0 ? (totalAbono / facturasValidas.length) : totalAbono;
 
       facturasValidas.forEach(linea => {
         const fDB = facturas.find(x => x.factura === linea.factura) || {};
+
+        // FIX #1: usar el importe realmente aplicado a ESTA factura (guardado en
+        // conciliaciones.importe_factura vía handleConfirmar), no el reparto parejo.
+        const importeLinea = (linea as any).importe_factura;
+        const montoAplicado = (importeLinea !== undefined && importeLinea !== null && importeLinea !== 0)
+          ? parseFloat(String(importeLinea))
+          : distribuido;
+
         let [serieRaw, correlativoRaw] = (linea.factura || '').split('-');
         const serie = (serieRaw || '').trim().padStart(20, '0');
         const correlativo = (correlativoRaw || '').trim().padStart(20, '0');
@@ -1062,8 +1084,8 @@ export default function App() {
         const tipoDoc = esBoleta ? '03' : '01';
         const cuenta6_final = fDB.cuenta_contable ? fDB.cuenta_contable : (esBoleta ? '121203' : '121201');
 
-        const impSoles = configCta.mon === 'S' ? distribuido.toFixed(2) : '';
-        const impDolares = configCta.mon === 'D' ? distribuido.toFixed(2) : '';
+        const impSoles = configCta.mon === 'S' ? montoAplicado.toFixed(2) : '';
+        const impDolares = configCta.mon === 'D' ? montoAplicado.toFixed(2) : '';
 
         datosExportar.push({
           'Fecha2': p.fecha || '',
