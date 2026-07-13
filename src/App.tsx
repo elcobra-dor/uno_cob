@@ -180,7 +180,12 @@ export default function App() {
         f.saldo = Math.round(f.saldo * 100) / 100;
       });
 
-      // Apply dynamic suggestions for pending ones
+      // Apply dynamic suggestions for pending ones.
+      // IMPORTANTE: las sugerencias NUNCA deben descontar saldo en memoria.
+      // El saldo de una factura solo se reduce por abonos CONFIRMADOS (ver bloque anterior).
+      // Si una sugerencia descontara saldo aquí, una factura recién liberada (p. ej. tras
+      // un "Quitar") podía volver a marcarse como saldo 0 solo porque el motor de sugerencias
+      // la reservó silenciosamente para otro abono pendiente, sin que el usuario confirmara nada.
       initialAbonos.forEach(p => {
         if (p.estado === 'pendiente') {
           const sug = sugerirFactura(p, facturasConSaldos);
@@ -189,13 +194,7 @@ export default function App() {
             p.motivo = sug.motivo;
             p.confianza = sug.confianza;
             p.estado = 'sugerida';
-
-            // Discount sug from local available invoice so next payment doesn't target the same invoice
-            const f = facturasConSaldos.find(x => x.factura === sug.factura);
-            if (f) {
-              const cobro = Math.min(p.monto, f.saldo);
-              f.saldo = Math.round((f.saldo - cobro) * 100) / 100;
-            }
+            // Sin descuento de saldo: es solo una propuesta, no una asignación real.
           }
         }
       });
