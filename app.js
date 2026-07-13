@@ -995,55 +995,48 @@ window.exportarSistema = function() {
     const datosExportar = [];
 
     confirmados.forEach(p => {
-        // EXTRAER LA GLOSA DEL LIBRO MAYOR (Soporta si en BD se guardó como glosa o descripción)
         const glosaMayor = String(p.glosa || p.descripcion || p.observacion || '').trim();
-        
-        // Separamos el texto de la glosa por sus espacios en blanco
         const partesGlosa = glosaMayor.split(/\s+/);
         
-        // INDICACIÓN 1: Extraer estrictamente las 3 letras del banco (Primera palabra)
-        const bancoTresLetras = partesGlosa[0] ? partesGlosa[0].toUpperCase().substring(0, 3) : '';
+        // MANTENEMOS la lógica de 3 letras, pero REVISA que tu descripción/glosa no diga "SCT" si es BCP.
+        // Si el banco siempre es BCP, podrías incluso cambiar 'bancoTresLetras' a 'BCP' manualmente aquí.
+        const bancoTresLetras = partesGlosa[0] ? partesGlosa[0].toUpperCase().substring(0, 3) : 'BCP';
         
-        // INDICACIÓN 2: Extraer los 3 dígitos de la cuenta (Segunda palabra)
         const cuentaTresDigitos = partesGlosa[1] ? partesGlosa[1].substring(0, 3) : '';
-        
-        // Cruzamos los 3 dígitos con tu tabla para obtener la Cuenta Contable Real y la Moneda
         const configCta = TABLA_CUENTAS[cuentaTresDigitos] || { 
-            cta_contable: 'REVISAR', 
+            cta_contable: '104113', // Cuenta por defecto si no encuentra
             mon: (p.moneda === 'USD' ? 'D' : 'S') 
         };
 
         const facturasValidas = p.facturas.filter(f => f.factura && f.factura !== 'NO_OPERATIVO');
-        const totalAbono = parseFloat(p.monto) + (p.comisionAceptada ? parseFloat(p.montoComision||0) : 0);
-        let distribuido = facturasValidas.length > 0 ? (totalAbono / facturasValidas.length) : totalAbono;
 
         facturasValidas.forEach(linea => {
             const fDB = FACTURAS.find(x => x.factura === linea.factura) || {};
             
-            // Formateo de Serie y Correlativo a 20 dígitos exigidos por el ERP
-            let [serieRaw, correlativoRaw] = (linea.factura || '').split('-');
-            const serie = (serieRaw || '').trim().padStart(20, '0');
-            const correlativo = (correlativoRaw || '').trim().padStart(20, '0');
+            // --- CORRECCIÓN MATEMÁTICA: Usar el monto real de la factura, no un promedio ---
+            const importeReal = parseFloat(fDB.saldo_original || fDB.saldo || linea.importe_factura || 0);
+            
+            const serieRaw = (linea.factura || '').split('-')[0] || '';
+            const correlativoRaw = (linea.factura || '').split('-')[1] || '';
+            const serie = serieRaw.trim().padStart(20, '0');
+            const correlativo = correlativoRaw.trim().padStart(20, '0');
             
             const esBoleta = linea.factura.toUpperCase().startsWith('B');
             const tipoDoc = esBoleta ? '03' : '01';
-            
-            // Jalar la Cuenta 6 directa del archivo contable guardado en la base de datos
             const cuenta6_final = fDB.cuenta_contable ? fDB.cuenta_contable : (esBoleta ? '121203' : '121201');
 
-            // Separación estricta de montos según la moneda de la cuenta bancaria
-            const impSoles = configCta.mon === 'S' ? distribuido.toFixed(2) : '';
-            const impDolares = configCta.mon === 'D' ? distribuido.toFixed(2) : '';
+            // --- ASIGNACIÓN EXACTA DE MONTOS ---
+            const impSoles = configCta.mon === 'S' ? importeReal.toFixed(2) : '';
+            const impDolares = configCta.mon === 'D' ? importeReal.toFixed(2) : '';
 
-            // Construcción de la fila idéntica a tu plantilla del sistema
             datosExportar.push({
                 'Fecha2': p.fecha || '',
                 'cdoccan C(2)': '000',
-                'banco3': bancoTresLetras,             // Las 3 letras exactas de la GLOSA (Ej: BCP)
+                'banco3': bancoTresLetras, 
                 'op': p.operacion || '',
-                'Cta banco': configCta.cta_contable,   // La cuenta contable cruzada (Ej: 104113)
+                'Cta banco': configCta.cta_contable, 
                 'M*': configCta.mon,
-                'IMPORTE': impSoles,                   
+                'IMPORTE': impSoles, 
                 'TC4': fDB.tipo_cambio ? parseFloat(fDB.tipo_cambio).toFixed(4) : '1.0000', 
                 'Cod pago': '003',
                 'tipo doc': tipoDoc,
@@ -1052,17 +1045,16 @@ window.exportarSistema = function() {
                 'Fecha5': fDB.fecha_doc || '',
                 'VENC': fDB.fecha_ven || fDB.fecha_doc || '',
                 'cod identificacion': '01',
-                'RUC': fDB.ruc || '',                  
+                'RUC': fDB.ruc || '', 
                 'razon social': fDB.razon_social || '',
-                'Importe documento': (fDB.saldo_original !== undefined ? parseFloat(fDB.saldo_original) : parseFloat(fDB.saldo)).toFixed(2),
-                'dolares': impDolares,                 
-                'cuenta6': cuenta6_final,              
-                'GLOSA7': glosaMayor                   // La glosa original completa del Libro Mayor
+                'Importe documento': importeReal.toFixed(2),
+                'dolares': impDolares, 
+                'cuenta6': cuenta6_final, 
+                'GLOSA7': glosaMayor 
             });
         });
     });
 
-    // Generar el archivo Excel final para subirlo a tu sistema
     const ws = XLSX.utils.json_to_sheet(datosExportar);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Export_ERP");
