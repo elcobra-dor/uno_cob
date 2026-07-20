@@ -1025,33 +1025,106 @@ export default function App() {
 
   // 7. Data Export Utilities
   const handleExportarCSV = () => {
-    const headers = ['Fecha', 'Descripcion', 'Ordenante', 'Moneda', 'Monto Abono', 'Operacion - Numero', 'Factura_Cancelada', 'Empresa', 'Importe Factura', 'Saldo por Asignar', 'Estado'];
+    // 1. Cabeceras con el nuevo orden para el Libro Mayor
+    const headers = [
+      'Banco',
+      'Cuenta',
+      'Moneda',
+      'Fecha',
+      'Descripción',
+      'Importe Aplicado',
+      'Número de Operación',
+      'Ordenante',
+      'Factura',
+      'Estado'
+    ];
     const rows = [headers];
 
     abonos.forEach(p => {
-      const facts = p.facturas.filter(f => f.factura);
-      const base = [p.fecha, p.descripcion, p.ordenante || '', p.moneda === 'USD' ? 'USD' : 'PEN', p.monto, p.operacion];
+      // Extracción de Banco y Cuenta de la descripción
+      const glosaMayor = String(p.glosa || p.descripcion || '').trim();
+      const partesGlosa = glosaMayor.split(/\s+/);
+      const banco = partesGlosa[0] ? partesGlosa[0].replace(/[^A-Za-z]/g, '').toUpperCase().substring(0, 3) : '';
+      const cuenta = partesGlosa[1] ? partesGlosa[1].replace(/\D/g, '').substring(0, 3) : '';
       
-      if (!facts.length) {
-        rows.push([...base, '', '', '', p.monto, p.estado]);
-      } else {
-        const sumF = facts.reduce((acc, f) => {
-          const fd = facturas.find(x => x.factura === f.factura) || {};
-          return acc + parseFloat(String(fd.saldo_original || fd.saldo || 0));
-        }, 0);
-        const saldo = Math.round((p.monto - sumF) * 100) / 100;
-        
-        facts.forEach((f, idx) => {
-          const fd = facturas.find(x => x.factura === f.factura) || {};
+      const moneda = p.moneda === 'USD' ? 'USD' : 'PEN';
+      const fecha = p.fecha || '';
+      const descripcion = p.descripcion || '';
+      
+      // Número de operación siempre a 8 dígitos (rellenado con ceros)
+      const operacionFmt = String(p.operacion || '').trim().padStart(8, '0');
+      const ordenante = p.ordenante || '';
+
+      const facturasValidas = (p.facturas || []).filter(f => f.factura);
+
+      // CASO A: Abono sin ninguna factura asignada
+      if (facturasValidas.length === 0) {
+        rows.push([
+          banco, cuenta, moneda, fecha, descripcion, 
+          p.monto.toFixed(2), operacionFmt, ordenante, '', 'pendiente'
+        ]);
+      } 
+      // CASO B: Abono cruzado con 1 o más facturas
+      else {
+        let sumaAplicada = 0;
+        const distribuido = p.monto / facturasValidas.length;
+
+        facturasValidas.forEach(f => {
+          let montoAplicado = distribuido;
+          
+          // Si está confirmado, leemos cuánto se asignó en realidad
+          if (p.estado === 'confirmado' || p.estado === 'manual') {
+            const importeLinea = (f as any).importe_factura;
+            if (importeLinea !== undefined && importeLinea !== null && importeLinea !== 0) {
+               montoAplicado = parseFloat(String(importeLinea));
+            }
+          } else {
+            // Si solo está sugerido o en la pantalla, usamos el saldo de la factura
+            const fDB = facturas.find(x => x.factura === f.factura);
+            if (fDB) {
+              montoAplicado = Math.min(fDB.saldo, p.monto - sumaAplicada);
+            }
+          }
+          
+          // Sanitizador de seguridad para no exceder el abono
+          montoAplicado = Math.min(montoAplicado, p.monto - sumaAplicada);
+          if (montoAplicado < 0) montoAplicado = 0;
+
+          sumaAplicada += montoAplicado;
+
+          // Formateo estricto de Factura: FXXX-00000000
+          let facturaFmt = '';
+          if (f.factura === 'NO_OPERATIVO') {
+              facturaFmt = 'NO_OPERATIVO';
+          } else if (f.factura) {
+            const partesFact = f.factura.split('-');
+            if (partesFact.length === 2) {
+              const serie = partesFact[0].trim();
+              const correlativo = partesFact[1].trim().padStart(8, '0');
+              facturaFmt = `${serie}-${correlativo}`;
+            } else {
+              facturaFmt = f.factura;
+            }
+          }
+
+          // Convertir estados a binario para el reporte: 'confirmado' o 'pendiente'
+          const estadoFmt = (p.estado === 'confirmado' || p.estado === 'manual') ? 'confirmado' : 'pendiente';
+
           rows.push([
-            ...base, 
-            f.factura, 
-            f.razon || '', 
-            String(fd.saldo_original || fd.saldo || ''), 
-            idx === facts.length - 1 && saldo > 0 ? String(saldo) : '', 
-            p.estado
+            banco, cuenta, moneda, fecha, descripcion,
+            montoAplicado.toFixed(2), operacionFmt, ordenante, facturaFmt, estadoFmt
           ]);
         });
+
+        // LÓGICA DE SALDO A FAVOR / VUELTO
+        const saldoRestante = p.monto - sumaAplicada;
+        if (saldoRestante > 0.01) {
+          // Crea la fila huérfana con el monto restante y sin factura
+          rows.push([
+            banco, cuenta, moneda, fecha, descripcion,
+            saldoRestante.toFixed(2), operacionFmt, ordenante, '', 'pendiente'
+          ]);
+        }
       }
     });
 
@@ -1059,11 +1132,10 @@ export default function App() {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `conciliacion_capeco_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `contraste_libromayor_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
-    showToast('CSV de conciliación exportado ✓', 'green');
+    showToast('CSV para Libro Mayor exportado ✓', 'green');
   };
-
   const handleExportarSistema = () => {
     const confirmados = abonos.filter(
       p => (p.estado === 'confirmado' || p.estado === 'manual') && p.facturas && p.facturas.some(f => f.factura && f.factura !== 'NO_OPERATIVO')
