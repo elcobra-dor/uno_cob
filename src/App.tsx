@@ -676,6 +676,9 @@ export default function App() {
             return;
           }
 
+          // TEMP DEBUG — quitar después de confirmar
+          console.log('DEBUG deteccion', { esBbva, esScotiabank, esInterbank, esNacion, headerIdx, filaHeader: rawData[headerIdx] });
+
           const nuevos: any[] = [];
           const egresosRaw: any[] = [];
           const limpiarMonto = (texto: any) => {
@@ -852,6 +855,9 @@ export default function App() {
               }
             }
           }
+
+          // TEMP DEBUG — quitar después de confirmar
+          console.log('DEBUG conteo final', { totalFilas: rawData.length - headerIdx - 1, nuevos: nuevos.length, egresosRaw: egresosRaw.length });
 
           // Inserción en Supabase
           // FIX #2: se quitó `ignoreDuplicates: true`. Con ese flag, si el número de operación
