@@ -699,7 +699,7 @@ export default function App() {
               if (montoVal === 0) continue;
               let opVal = String(r[colDoc] || '').trim();
               if (!opVal || opVal === '-') opVal = 'BBVA-' + fechaVal.replace(/\//g, '') + '-' + i;
-              const obj = { operacion: opVal, fecha: fmtFecha(fechaVal), descripcion: String(r[colConcepto] || '').trim(), moneda: monedaBanco };
+              const obj = { operacion: opVal, fecha: fmtFecha(fechaVal), descripcion: String(r[colConcepto] || '').trim(), moneda: monedaBanco, cuenta: '', banco: 'BBVA', saldo: 0 };
               
               if (montoVal > 0) nuevos.push({ ...obj, monto: montoVal });
               else egresosRaw.push({ ...obj, monto: Math.abs(montoVal), estado: 'pendiente' });
@@ -719,7 +719,7 @@ export default function App() {
               const fechaVal = String(r[colFecha] || '').trim();
               if (!fechaVal || montoVal === 0) continue;
               if (!opVal) opVal = 'SCO-' + fechaVal.replace(/\//g, '') + '-' + i;
-              const obj = { operacion: opVal, fecha: fmtFecha(fechaVal), descripcion: String(r[colMov] || '').trim(), moneda: monedaBanco };
+              const obj = { operacion: opVal, fecha: fmtFecha(fechaVal), descripcion: String(r[colMov] || '').trim(), moneda: monedaBanco, cuenta: '', banco: 'SCOTIABANK', saldo: 0 };
               
               if (montoVal > 0) nuevos.push({ ...obj, monto: montoVal });
               else egresosRaw.push({ ...obj, monto: Math.abs(montoVal), estado: 'pendiente' });
@@ -743,7 +743,7 @@ export default function App() {
               if (!fechaVal || (montoAbono === 0 && montoCargo === 0)) continue;
               if (opVal === '-' || opVal === '') opVal = 'INT-' + fechaVal.replace(/\//g, '') + '-' + i;
               const glosaCompleta = [String(r[colMov] || '').trim(), String(r[colDesc] || '').trim()].filter(Boolean).join(' - ');
-              const obj = { operacion: opVal, fecha: fmtFecha(fechaVal), descripcion: glosaCompleta, moneda: monedaBanco };
+              const obj = { operacion: opVal, fecha: fmtFecha(fechaVal), descripcion: glosaCompleta, moneda: monedaBanco, cuenta: '', banco: 'INTERBANK', saldo: 0 };
               
               if (montoAbono > 0) nuevos.push({ ...obj, monto: montoAbono });
               else if (montoCargo > 0) egresosRaw.push({ ...obj, monto: montoCargo, estado: 'pendiente' });
@@ -771,7 +771,10 @@ export default function App() {
                 fecha: fmtFecha(fRaw), 
                 descripcion: `DETRACCION BN - ${String(r[colTrans] || '').trim()} - RUC: ${rucVal}`, 
                 referencia2: rucVal, 
-                moneda: 'PEN' 
+                moneda: 'PEN',
+                cuenta: '',
+                banco: 'BN',
+                saldo: 0
               };
               
               if (montoAbono > 0) nuevos.push({ ...obj, monto: montoAbono });
@@ -791,6 +794,14 @@ export default function App() {
             const colOrd = headers.findIndex(h => h === 'ordenante');
             const colMoneda = headers.findIndex(h => h === 'moneda' || h.includes('moneda'));
             const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
+            // FIX #4: se agregó captura de Cuenta/Banco/Saldo. El número de operación del banco
+            // NO es único por sí solo (ej. "INT PLAZO" se repite igual en varias cuentas el mismo
+            // día; "COMIS PAGO DETRACCION" puede repetirse igual, misma fecha, mismo monto, mismo
+            // día, en la MISMA cuenta). El Saldo corriente es lo único que distingue esos casos
+            // porque es acumulativo: dos movimientos reales distintos siempre dejan un saldo distinto.
+            const colCuenta = headers.findIndex(h => h === 'cuenta' || h.includes('cuenta'));
+            const colBanco = headers.findIndex(h => h === 'banco' || h.includes('banco'));
+            const colSaldo = headers.findIndex(h => h.includes('saldo'));
             
             let contPEN = 0, contUSD = 0;
 
@@ -825,7 +836,10 @@ export default function App() {
                 glosa: colGlosa !== -1 ? String(r[colGlosa]).trim() : '',
                 referencia2: colRef2 !== -1 ? String(r[colRef2]).trim() : '',
                 ordenante: ordVal,
-                moneda: monedaFila
+                moneda: monedaFila,
+                cuenta: colCuenta !== -1 ? String(r[colCuenta] || '').trim() : '',
+                banco: colBanco !== -1 ? String(r[colBanco] || '').trim() : '',
+                saldo: colSaldo !== -1 ? limpiarMonto(r[colSaldo]) : 0
               };
 
               if (montoVal > 0) {
@@ -842,11 +856,16 @@ export default function App() {
           // banco/glosa/descripcion, aunque volvieras a subir el Libro Mayor corregido.
           // El estado de conciliación vive aparte, en la tabla `conciliaciones`, así que
           // actualizar `abonos` aquí es seguro y no borra conciliaciones ya confirmadas.
-          const { error: abonosErr } = await supabase.from('abonos').upsert(nuevos, { onConflict: 'operacion' });
+          // FIX #3: se cambió el onConflict de 'operacion' a 'operacion,fecha,monto'.
+          // Varios bancos repiten el mismo número de operación en movimientos DISTINTOS
+          // (comisiones, ITF, cargos por lote). Con onConflict solo en 'operacion', el
+          // upsert pisaba silenciosamente esas filas en vez de insertarlas como nuevas.
+          // Requiere el UNIQUE (operacion, fecha, monto) creado en la tabla vía migración SQL.
+          const { error: abonosErr } = await supabase.from('abonos').upsert(nuevos, { onConflict: 'operacion,fecha,monto,cuenta,saldo' });
           if (abonosErr) throw abonosErr;
 
           if (egresosRaw.length) {
-            const { error: egrErr } = await supabase.from('egresos').upsert(egresosRaw, { onConflict: 'operacion' });
+            const { error: egrErr } = await supabase.from('egresos').upsert(egresosRaw, { onConflict: 'operacion,fecha,monto,cuenta,saldo' });
             if (egrErr) throw egrErr;
           }
 
