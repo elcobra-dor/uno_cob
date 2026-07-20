@@ -1025,7 +1025,7 @@ export default function App() {
 
   // 7. Data Export Utilities
   const handleExportarCSV = () => {
-    // 1. Cabeceras con el nuevo orden para el Libro Mayor
+    // 1. Cabeceras con el orden exacto del Libro Mayor
     const headers = [
       'Banco',
       'Cuenta',
@@ -1041,23 +1041,22 @@ export default function App() {
     const rows = [headers];
 
     abonos.forEach(p => {
-      // Extracción de Banco y Cuenta de la descripción
-      const glosaMayor = String(p.glosa || p.descripcion || '').trim();
-      const partesGlosa = glosaMayor.split(/\s+/);
-      const banco = partesGlosa[0] ? partesGlosa[0].replace(/[^A-Za-z]/g, '').toUpperCase().substring(0, 3) : '';
-      const cuenta = partesGlosa[1] ? partesGlosa[1].replace(/\D/g, '').substring(0, 3) : '';
+      // EXTRACCIÓN ESTRICTA DE LA GLOSA (Ej: "BCP 010 08/06/2026 09639958")
+      const glosaParts = String(p.glosa || '').trim().split(/\s+/);
+      const banco = glosaParts[0] ? glosaParts[0].toUpperCase() : '';
+      const cuenta = glosaParts[1] ? glosaParts[1] : '';
       
       const moneda = p.moneda === 'USD' ? 'USD' : 'PEN';
       const fecha = p.fecha || '';
       const descripcion = p.descripcion || '';
       
-      // Número de operación siempre a 8 dígitos (rellenado con ceros)
+      // Número de operación siempre forzado a 8 dígitos con ceros a la izquierda
       const operacionFmt = String(p.operacion || '').trim().padStart(8, '0');
       const ordenante = p.ordenante || '';
 
       const facturasValidas = (p.facturas || []).filter(f => f.factura);
 
-      // CASO A: Abono sin ninguna factura asignada
+      // CASO A: Abono sin asignar (huérfano)
       if (facturasValidas.length === 0) {
         rows.push([
           banco, cuenta, moneda, fecha, descripcion, 
@@ -1072,27 +1071,24 @@ export default function App() {
         facturasValidas.forEach(f => {
           let montoAplicado = distribuido;
           
-          // Si está confirmado, leemos cuánto se asignó en realidad
           if (p.estado === 'confirmado' || p.estado === 'manual') {
             const importeLinea = (f as any).importe_factura;
             if (importeLinea !== undefined && importeLinea !== null && importeLinea !== 0) {
                montoAplicado = parseFloat(String(importeLinea));
             }
           } else {
-            // Si solo está sugerido o en la pantalla, usamos el saldo de la factura
             const fDB = facturas.find(x => x.factura === f.factura);
             if (fDB) {
               montoAplicado = Math.min(fDB.saldo, p.monto - sumaAplicada);
             }
           }
           
-          // Sanitizador de seguridad para no exceder el abono
           montoAplicado = Math.min(montoAplicado, p.monto - sumaAplicada);
           if (montoAplicado < 0) montoAplicado = 0;
 
           sumaAplicada += montoAplicado;
 
-          // Formateo estricto de Factura: FXXX-00000000
+          // FORMATEO ESTRICTO DE FACTURA: FXXX-00000000
           let facturaFmt = '';
           if (f.factura === 'NO_OPERATIVO') {
               facturaFmt = 'NO_OPERATIVO';
@@ -1107,7 +1103,6 @@ export default function App() {
             }
           }
 
-          // Convertir estados a binario para el reporte: 'confirmado' o 'pendiente'
           const estadoFmt = (p.estado === 'confirmado' || p.estado === 'manual') ? 'confirmado' : 'pendiente';
 
           rows.push([
@@ -1116,10 +1111,9 @@ export default function App() {
           ]);
         });
 
-        // LÓGICA DE SALDO A FAVOR / VUELTO
+        // LÓGICA DE SALDO PENDIENTE (Nueva fila con vuelto)
         const saldoRestante = p.monto - sumaAplicada;
         if (saldoRestante > 0.01) {
-          // Crea la fila huérfana con el monto restante y sin factura
           rows.push([
             banco, cuenta, moneda, fecha, descripcion,
             saldoRestante.toFixed(2), operacionFmt, ordenante, '', 'pendiente'
