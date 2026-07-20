@@ -842,6 +842,9 @@ export default function App() {
                 saldo: colSaldo !== -1 ? limpiarMonto(r[colSaldo]) : 0
               };
 
+              // TEMP DEBUG — quitar después de confirmar
+              console.log('DEBUG fila', i, { opVal, cuenta: obj.cuenta, banco: obj.banco, saldo: obj.saldo, montoVal });
+
               if (montoVal > 0) {
                   nuevos.push({ ...obj, monto: montoVal });
               } else {
