@@ -676,8 +676,6 @@ export default function App() {
             return;
           }
 
-          // TEMP DEBUG — quitar después de confirmar
-          console.log('DEBUG deteccion', { esBbva, esScotiabank, esInterbank, esNacion, headerIdx, filaHeader: rawData[headerIdx] });
 
           const nuevos: any[] = [];
           const egresosRaw: any[] = [];
@@ -845,9 +843,6 @@ export default function App() {
                 saldo: colSaldo !== -1 ? limpiarMonto(r[colSaldo]) : 0
               };
 
-              // TEMP DEBUG — quitar después de confirmar
-              console.log('DEBUG fila', i, { opVal, cuenta: obj.cuenta, banco: obj.banco, saldo: obj.saldo, montoVal });
-
               if (montoVal > 0) {
                   nuevos.push({ ...obj, monto: montoVal });
               } else {
@@ -855,9 +850,6 @@ export default function App() {
               }
             }
           }
-
-          // TEMP DEBUG — quitar después de confirmar
-          console.log('DEBUG conteo final', { totalFilas: rawData.length - headerIdx - 1, nuevos: nuevos.length, egresosRaw: egresosRaw.length });
 
           // Inserción en Supabase
           // FIX #2: se quitó `ignoreDuplicates: true`. Con ese flag, si el número de operación
