@@ -264,8 +264,49 @@ export default function App() {
       const { error } = await supabase.from('conciliaciones').upsert(rows, { onConflict: 'operacion,factura' });
       if (error) throw error;
 
+      // FIX #5: se quitó el `await cargarDesdeBD()` de aquí. Esa función hacía 5 SELECT
+      // completos (facturas, abonos, conciliaciones, egresos, categorías) y volvía a correr
+      // el motor de sugerencias para TODOS los abonos pendientes contra TODAS las facturas
+      // en cada confirmación — con miles de registros acumulados, eso es lo que se sentía
+      // lento al guardar un match. Ahora se actualiza solo lo que realmente cambió:
+      // el saldo de la(s) factura(s) afectada(s), este abono puntual, y se re-evalúa la
+      // sugerencia únicamente en los abonos que apuntaban a esas mismas facturas.
+      const facturasAfectadas = new Set(rows.map(r => r.factura));
+      const cobroPorFactura: { [factura: string]: number } = {};
+      rows.forEach(r => {
+        cobroPorFactura[r.factura] = (cobroPorFactura[r.factura] || 0) + r.importe_factura;
+      });
+
+      const facturasActualizadas = facturas.map(f =>
+        facturasAfectadas.has(f.factura)
+          ? { ...f, saldo: Math.round((f.saldo - (cobroPorFactura[f.factura] || 0)) * 100) / 100 }
+          : f
+      );
+
+      setFacturas(facturasActualizadas);
+
+      setAbonos(prevAbonos => prevAbonos.map(a => {
+        if (a.id === id) {
+          return {
+            ...a,
+            estado: 'confirmado',
+            facturas: rows.map(r => ({ factura: r.factura, razon: r.razon })),
+            motivo: 'Guardado'
+          };
+        }
+        // Solo re-evaluar sugerencia si este abono pendiente/sugerido apuntaba a
+        // alguna de las facturas cuyo saldo acaba de cambiar.
+        if ((a.estado === 'pendiente' || a.estado === 'sugerida') &&
+            a.facturas.some(f => facturasAfectadas.has(f.factura))) {
+          const sug = sugerirFactura(a, facturasActualizadas);
+          return sug
+            ? { ...a, facturas: [{ factura: sug.factura, razon: sug.razon }], motivo: sug.motivo, confianza: sug.confianza, estado: 'sugerida' }
+            : { ...a, facturas: [{ factura: '', razon: '' }], motivo: '', confianza: '', estado: 'pendiente' };
+        }
+        return a;
+      }));
+
       showToast('Conciliación confirmada e ingresada ✓', 'green');
-      await cargarDesdeBD();
     } catch (err: any) {
       alert(`Error al guardar conciliación: ${err.message}`);
     }
@@ -676,6 +717,8 @@ export default function App() {
             return;
           }
 
+          // TEMP DEBUG — quitar después de confirmar
+          console.log('DEBUG deteccion', { esBbva, esScotiabank, esInterbank, esNacion, headerIdx, filaHeader: rawData[headerIdx] });
 
           const nuevos: any[] = [];
           const egresosRaw: any[] = [];
@@ -843,6 +886,9 @@ export default function App() {
                 saldo: colSaldo !== -1 ? limpiarMonto(r[colSaldo]) : 0
               };
 
+              // TEMP DEBUG — quitar después de confirmar
+              console.log('DEBUG fila', i, { opVal, cuenta: obj.cuenta, banco: obj.banco, saldo: obj.saldo, montoVal });
+
               if (montoVal > 0) {
                   nuevos.push({ ...obj, monto: montoVal });
               } else {
@@ -850,6 +896,9 @@ export default function App() {
               }
             }
           }
+
+          // TEMP DEBUG — quitar después de confirmar
+          console.log('DEBUG conteo final', { totalFilas: rawData.length - headerIdx - 1, nuevos: nuevos.length, egresosRaw: egresosRaw.length });
 
           // Inserción en Supabase
           // FIX #2: se quitó `ignoreDuplicates: true`. Con ese flag, si el número de operación
