@@ -113,23 +113,37 @@ export default function App() {
     setDbStatus('connecting');
 
     try {
-      // a. Fetch invoices
-      const { data: fdata, error: ferror } = await supabase.from('facturas').select('*').order('fecha_doc');
+      // FIX #6: las 5 consultas son independientes entre sí (ninguna depende del
+      // resultado de otra), pero se disparaban una tras otra con `await` secuencial —
+      // cada una esperaba a que la anterior terminara. Con Promise.all se lanzan
+      // las 5 al mismo tiempo, así el tiempo total de carga es el de la consulta
+      // más lenta, no la suma de las 5.
+      const [
+        { data: fdata, error: ferror },
+        { data: bdata, error: berror },
+        { data: cdata, error: cerror },
+        { data: edata, error: eerror },
+        { data: catData, error: catError }
+      ] = await Promise.all([
+        supabase.from('facturas').select('*').order('fecha_doc'),
+        supabase.from('abonos').select('*').order('fecha'),
+        supabase.from('conciliaciones').select('*'),
+        supabase.from('egresos').select('*').order('fecha'),
+        supabase.from('categorias').select('*').eq('activo', true).order('orden')
+      ]);
       if (ferror) throw ferror;
+      if (berror) throw berror;
+      if (cerror) throw cerror;
+      if (eerror) throw eerror;
+      if (catError) throw catError;
+
       const facturasCargadas = (fdata || []).map((f: any) => ({
         ...f,
         saldo: parseFloat(f.saldo) || 0,
         saldo_original: parseFloat(f.saldo) || 0,
       }));
 
-      // b. Fetch abonos bank records
-      const { data: bdata, error: berror } = await supabase.from('abonos').select('*').order('fecha');
-      if (berror) throw berror;
       const abonosCargados = bdata || [];
-
-      // c. Fetch active matches/conciliaciones
-      const { data: cdata, error: cerror } = await supabase.from('conciliaciones').select('*');
-      if (cerror) throw cerror;
 
       // Map match records
       const concMap: { [key: string]: { factura: string; razon: string; importe_factura: number }[] } = {};
@@ -199,17 +213,10 @@ export default function App() {
         }
       });
 
-      // d. Fetch egresos records
-      const { data: edata, error: eerror } = await supabase.from('egresos').select('*').order('fecha');
-      if (eerror) throw eerror;
       const egresosCargados: Egreso[] = (edata || []).map((e: any) => ({
         ...e,
         monto: parseFloat(e.monto) || 0,
       }));
-
-      // e. Fetch categories
-      const { data: catData, error: catError } = await supabase.from('categorias').select('*').eq('activo', true).order('orden');
-      if (catError) throw catError;
 
       setFacturas(facturasConSaldos);
       setAbonos(initialAbonos);
