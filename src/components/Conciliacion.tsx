@@ -69,6 +69,34 @@ export default function Conciliacion({
     return [...new Set(montos)].sort((a, b) => a - b);
   }, [abonos]);
 
+  // FIX #8 (rendimiento): antes, el filter+sort de facturas para el dropdown de
+  // cada fila se recalculaba DENTRO del .map() de renderizado — es decir, una vez
+  // POR CADA abono visible (¡con ~500 abonos x ~1500 facturas, cientos de sorts
+  // completos con localeCompare en cada render!). Ahora se precalcula una sola vez
+  // aquí, memoizado, y cada fila solo hace un filtro liviano sobre esta lista ya
+  // ordenada (sin volver a ordenar).
+  const comparadorFactura = (a: Factura, b: Factura) => {
+    const ordenNombre = (a.razon_social || '').localeCompare(b.razon_social || '');
+    if (ordenNombre !== 0) return ordenNombre;
+    const fechaA = new Date(a.fecha_doc || 0).getTime();
+    const fechaB = new Date(b.fecha_doc || 0).getTime();
+    if (fechaA !== fechaB) return fechaA - fechaB;
+    return (a.factura || '').localeCompare(b.factura || '');
+  };
+
+  const facturasPENOrdenadas = useMemo(() => facturas
+    .filter(f => f.saldo > 0.01 && (f.moneda === 'USD' ? 'USD' : 'PEN') === 'PEN')
+    .sort(comparadorFactura), [facturas]);
+
+  const facturasUSDOrdenadas = useMemo(() => facturas
+    .filter(f => f.saldo > 0.01 && (f.moneda === 'USD' ? 'USD' : 'PEN') === 'USD')
+    .sort(comparadorFactura), [facturas]);
+
+  // Excepción detracción BN: facturas USD elegibles, ya ordenadas (lista chica, se
+  // recalcula poco porque depende solo de facturas, igual que las de arriba).
+  const facturasUSDExcepcionDetraccion = useMemo(() =>
+    facturasUSDOrdenadas.filter(f => requiereDetraccionPEN(f)), [facturasUSDOrdenadas]);
+
   // Filtering logic
   const abonosFiltrados = useMemo(() => {
     const buscaNorm = norm(busca);
@@ -263,29 +291,21 @@ export default function Conciliacion({
             const CUOTAS_ESTANDAR = [1980, 1270, 910, 530, 500, 410, 860];
             const esPagoEstandar = CUOTAS_ESTANDAR.includes(p.monto);
 
-            // Filter valid invoices for dropdown
-            const facturasOpciones = facturas
-              .filter(f => {
-                if (f.saldo <= 0.01) return false;
-                const mismaMoneda = (f.moneda === 'USD' ? 'USD' : 'PEN') === pMoneda;
-                const excepcionDetraccion = esBN && f.moneda === 'USD' && requiereDetraccionPEN(f);
-                if (!mismaMoneda && !excepcionDetraccion) return false;
-
-                // MODO FLEXIBLE: Si verTodas es falso y el pago es estándar, filtramos exactos.
-                if (!verTodas && esPagoEstandar && f.saldo !== p.monto) {
-                  return false;
-                }
-                return true;
-              })
-              .sort((a, b) => {
-                // Ordenamiento Alfabético y Cronológico
-                const ordenNombre = (a.razon_social || '').localeCompare(b.razon_social || '');
-                if (ordenNombre !== 0) return ordenNombre;
-                const fechaA = new Date(a.fecha_doc || 0).getTime();
-                const fechaB = new Date(b.fecha_doc || 0).getTime();
-                if (fechaA !== fechaB) return fechaA - fechaB;
-                return (a.factura || '').localeCompare(b.factura || '');
-              });
+            // Filter valid invoices for dropdown — FIX #8: ya no se ordena aquí,
+            // se parte de las listas precalculadas (facturasPENOrdenadas / facturasUSDOrdenadas)
+            // y solo se aplica el filtro liviano de "pago estándar" que sí depende de esta fila.
+            let baseFacturas = pMoneda === 'PEN' ? facturasPENOrdenadas : facturasUSDOrdenadas;
+            if (esBN && pMoneda === 'PEN' && facturasUSDExcepcionDetraccion.length) {
+              // Excepción rara (detracción BN): mezclar y reordenar solo en este caso puntual.
+              baseFacturas = [...baseFacturas, ...facturasUSDExcepcionDetraccion].sort(comparadorFactura);
+            }
+            const facturasOpciones = baseFacturas.filter(f => {
+              // MODO FLEXIBLE: Si verTodas es falso y el pago es estándar, filtramos exactos.
+              if (!verTodas && esPagoEstandar && f.saldo !== p.monto) {
+                return false;
+              }
+              return true;
+            });
 
             // Find selected invoice in state for detracción warning
             const facturaElegida = p.facturas?.length > 0 
