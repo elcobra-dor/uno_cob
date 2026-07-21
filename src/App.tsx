@@ -111,6 +111,7 @@ export default function App() {
     if (!userAuthenticated) return;
     setLoadingData(true);
     setDbStatus('connecting');
+    const __t0 = performance.now(); // TEMP TIMING
 
     try {
       // FIX #6: las 5 consultas son independientes entre sí (ninguna depende del
@@ -136,6 +137,8 @@ export default function App() {
       if (cerror) throw cerror;
       if (eerror) throw eerror;
       if (catError) throw catError;
+      console.log('TIMING fetch Supabase (ms):', Math.round(performance.now() - __t0)); // TEMP TIMING
+      const __t1 = performance.now(); // TEMP TIMING
 
       const facturasCargadas = (fdata || []).map((f: any) => ({
         ...f,
@@ -218,12 +221,16 @@ export default function App() {
         monto: parseFloat(e.monto) || 0,
       }));
 
+      console.log('TIMING calculo sugerencias (ms):', Math.round(performance.now() - __t1)); // TEMP TIMING
+      const __t2 = performance.now(); // TEMP TIMING
+
       setFacturas(facturasConSaldos);
       setAbonos(initialAbonos);
       setEgresos(egresosCargados);
       setCategorias(catData || []);
       setDbStatus('connected');
       showToast('Datos sincronizados correctamente', 'green');
+      setTimeout(() => console.log('TIMING hasta despues de setState + 1 tick (ms):', Math.round(performance.now() - __t2)), 0); // TEMP TIMING
     } catch (err: any) {
       console.error(err);
       setDbStatus('error');
