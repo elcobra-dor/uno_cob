@@ -97,7 +97,9 @@ const PALABRAS_GENERICAS_EMPRESA = new Set([
   'CORPORACION', 'GRUPO', 'PERU', 'PERUANA', 'PERUANO', 'SOCIEDAD', 'ANONIMA', 'CERRADA', 'ABIERTA', 'LIMITADA',
   'RESPONSABILIDAD', 'PROYECTO', 'PROYECTOS', 'OBRA', 'OBRAS', 'INMOBILIARIA', 'INMOBILIARIO', 'INVERSIONES',
   'INVERSION', 'COMERCIAL', 'INDUSTRIAL', 'NACIONAL', 'INTERNACIONAL', 'ASOCIADOS', 'CONSULTORES', 'CONSULTORIA',
-  'ARQUITECTOS', 'ARQUITECTURA', 'COMPANIA', 'TRADING', 'IMPORT', 'EXPORT', 'MULTISERVICIOS', 'SOLUCIONES'
+  'ARQUITECTOS', 'ARQUITECTURA', 'COMPANIA', 'TRADING', 'IMPORT', 'EXPORT', 'MULTISERVICIOS', 'SOLUCIONES',
+  // 🚨 NUEVAS INCLUSIONES CRÍTICAS:
+  'SAC', 'SRL', 'EIRL', 'SAA', 'SA', 'E.I.R.L', 'S.A.C', 'S.R.L', 'S.A'
 ]);
 
 export function sugerirFactura(pago: Partial<Abono>, facturas: Factura[]): { factura: string; razon: string; motivo: string; confianza: 'alta' | 'media' } | null {
@@ -191,27 +193,52 @@ export function sugerirFactura(pago: Partial<Abono>, facturas: Factura[]): { fac
   // 6. Por Ordenante del Cliente
   if (ord && ord.length > 3) {
     const ordWords = ord.split(' ').filter(w => w.length > 2 && !PALABRAS_GENERICAS_EMPRESA.has(w));
-    let facturasDelCliente: Factura[] = [];
-    for (const f of disponibles) {
-      const rs = rsNormOf(f);
-      let coincidencias = 0;
-      for (const w of ordWords) {
-        if (rs.includes(w)) coincidencias++;
+    
+    // Solo evaluar si quedaron palabras reales que no sean genéricas
+    if (ordWords.length > 0) { 
+      let facturasDelCliente: Factura[] = [];
+      
+      for (const f of disponibles) {
+        const rs = (f as any).razon_social_norm || norm(f.razon_social);
+        
+        // Coincidencia fuerte: el nombre de uno contiene al otro por completo
+        if (rs.includes(ord) || ord.includes(rs)) {
+          facturasDelCliente.push(f);
+          continue;
+        }
+        
+        // Coincidencia por palabras individuales
+        let coincidencias = 0;
+        for (const w of ordWords) {
+          if (rs.includes(w)) coincidencias++;
+        }
+        
+        // REGLA ESTRICTA: Exigir al menos el 50% de coincidencias de las palabras clave
+        // Ej: Si el cliente tiene 2 palabras clave, debe coincidir al menos 1. Si tiene 4, deben coincidir 2.
+        const umbralMinimo = Math.max(1, Math.ceil(ordWords.length * 0.5));
+        
+        if (coincidencias >= umbralMinimo) {
+          facturasDelCliente.push(f);
+        }
       }
-      if (coincidencias > 0 || rs.includes(ord) || ord.includes(rs)) {
-        facturasDelCliente.push(f);
+      
+      if (facturasDelCliente.length > 0) {
+        facturasDelCliente.sort((a, b) => a.fecha_doc.localeCompare(b.fecha_doc));
+        const pagables = facturasDelCliente.filter(f => f.saldo <= monto);
+        
+        if (pagables.length > 0) {
+          return { factura: pagables[0].factura, razon: pagables[0].razon_social, motivo: 'Ordenante detectado — Factura más antigua', confianza: 'media' };
+        }
+        
+        // BLOQUEO DE ABSURDOS: Solo sugerimos "Abono parcial" si el abono representa 
+        // al menos el 5% del saldo de la factura. Esto evita cruzar S/ 7.20 con S/ 1,880.00
+        const facturaParaParcial = facturasDelCliente[0];
+        if (monto >= (facturaParaParcial.saldo * 0.05)) {
+          return { factura: facturaParaParcial.factura, razon: facturaParaParcial.razon_social, motivo: 'Abono parcial de cliente detectado', confianza: 'media' };
+        }
       }
-    }
-    if (facturasDelCliente.length > 0) {
-      facturasDelCliente.sort((a, b) => a.fecha_doc.localeCompare(b.fecha_doc));
-      const pagables = facturasDelCliente.filter(f => f.saldo <= monto);
-      if (pagables.length > 0) {
-        return { factura: pagables[0].factura, razon: pagables[0].razon_social, motivo: 'Ordenante detectado — Factura más antigua', confianza: 'media' };
-      }
-      return { factura: facturasDelCliente[0].factura, razon: facturasDelCliente[0].razon_social, motivo: 'Abono parcial de cliente detectado', confianza: 'media' };
     }
   }
-
   // 7. Similitud de texto en disponibles generales
   const candsGeneral = disponibles.filter(f => f.saldo <= monto);
   if (palabrasBusqueda.length > 0 && candsGeneral.length > 0) {
