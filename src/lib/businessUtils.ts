@@ -23,6 +23,20 @@ export function norm(s: string | null | undefined): string {
   return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// FIX #7 (rendimiento): sugerirFactura se llama una vez POR CADA abono pendiente,
+// y en cada llamada recalculaba norm(f.razon_social) desde cero para cada factura
+// candidata (mayúsculas + regex). Con ~500 abonos pendientes x ~1500 facturas, eso
+// son cientos de miles de normalizaciones de texto repetidas e innecesarias — la
+// razón social de una factura no cambia entre una llamada y la siguiente dentro de
+// la misma carga. Esta función cachea el resultado directamente en el objeto factura
+// (con un campo oculto), calculándolo una sola vez la primera vez que se necesita.
+function rsNormOf(f: any): string {
+  if (f.__rsNorm === undefined) {
+    f.__rsNorm = norm(f.razon_social);
+  }
+  return f.__rsNorm;
+}
+
 export function diasHasta(fecha: string | Date | null): number | null {
   if (!fecha) return null;
   const hoy = new Date();
@@ -154,7 +168,7 @@ export function sugerirFactura(pago: Partial<Abono>, facturas: Factura[]): { fac
     let best: Factura | null = null;
     let bestScore = 0;
     for (const f of facturasMontoExacto) {
-      const rs = norm(f.razon_social);
+      const rs = rsNormOf(f);
       let score = 0;
       const ordWords = ord.split(' ').filter(w => w.length > 2 && !PALABRAS_GENERICAS_EMPRESA.has(w));
       for (const w of ordWords) {
@@ -179,7 +193,7 @@ export function sugerirFactura(pago: Partial<Abono>, facturas: Factura[]): { fac
     const ordWords = ord.split(' ').filter(w => w.length > 2 && !PALABRAS_GENERICAS_EMPRESA.has(w));
     let facturasDelCliente: Factura[] = [];
     for (const f of disponibles) {
-      const rs = norm(f.razon_social);
+      const rs = rsNormOf(f);
       let coincidencias = 0;
       for (const w of ordWords) {
         if (rs.includes(w)) coincidencias++;
@@ -205,7 +219,7 @@ export function sugerirFactura(pago: Partial<Abono>, facturas: Factura[]): { fac
     let bestScore = 0;
     let bestPalabrasUsadas = 0;
     for (const f of candsGeneral) {
-      const rs = norm(f.razon_social);
+      const rs = rsNormOf(f);
       let score = 0;
       let palabrasUsadas = 0;
       for (const w of palabrasBusqueda) {
@@ -221,8 +235,8 @@ export function sugerirFactura(pago: Partial<Abono>, facturas: Factura[]): { fac
       }
     }
     if (best && bestScore >= 8 && bestPalabrasUsadas >= 1) {
-      const emp = norm((best as Factura).razon_social);
-      const elegida = disponibles.filter(f => norm(f.razon_social) === emp).sort((a, b) => a.fecha_doc.localeCompare(b.fecha_doc))[0] || best;
+      const emp = rsNormOf(best as Factura);
+      const elegida = disponibles.filter(f => rsNormOf(f) === emp).sort((a, b) => a.fecha_doc.localeCompare(b.fecha_doc))[0] || best;
       return { factura: elegida.factura, razon: elegida.razon_social, motivo: 'Similitud de texto — factura más antigua', confianza: 'media' };
     }
   }
