@@ -582,10 +582,14 @@ export default function App() {
 
     const limpiarDocNum = (serie: any, numero: any) => {
       const s = String(serie || '').trim().replace(/^0+/, '');
-      const n = String(numero || '').trim().replace(/^0+/, '');
-      return s && n ? `${s}-${n}` : null;
+      const n = String(numero || '').trim().replace(/^0+/, '').padStart(8, '0');
+      
+      if (!s && n === '00000000') return null;
+      if (!s) return n;
+      
+      return `${s}-${n}`;
     };
-
+    
     const atraparGlosa = (r: any) => {
       return String(r['GLOSA'] || r['Glosa'] || r['glosa'] || r['DESCRIPCION'] || r['Descripcion'] || '').trim();
     };
