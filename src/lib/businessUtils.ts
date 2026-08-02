@@ -3,6 +3,30 @@ import { Factura, Abono, Categoria } from '../types';
 export const UMBRAL_DETRACCION_PEN = 700;
 export const UMBRAL_DETRACCION_USD = 212;
 
+// FIX #10 (rendimiento/UX): loops síncronos grandes (p. ej. sugerirFactura corriendo
+// sobre cientos de abonos pendientes x miles de facturas) bloquean el hilo principal
+// del navegador. Si tardan más de unos pocos segundos corridos, Chrome muestra el
+// diálogo "la página no responde" — no es un bug de memoria ni de red, es que el
+// hilo nunca tiene chance de repintar ni de atender eventos mientras el loop corre.
+//
+// Esta función procesa el arreglo en lotes pequeños y, entre lote y lote, cede el
+// control al navegador con un `setTimeout(0)`. El trabajo total es el mismo (no
+// optimiza el algoritmo en sí), pero fragmentado así el navegador nunca ve un
+// bloqueo de más de un puñado de milisegundos consecutivos, así que no se congela
+// ni dispara el diálogo de "no responde".
+export async function procesarEnLotes<T>(
+  items: T[],
+  procesarItem: (item: T) => void,
+  tamLote = 50
+): Promise<void> {
+  for (let i = 0; i < items.length; i += tamLote) {
+    const lote = items.slice(i, i + tamLote);
+    lote.forEach(procesarItem);
+    // Cede el hilo principal: deja que el navegador pinte/responda antes del siguiente lote
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+}
+
 export function esSerieDetraccion(numFactura: string): boolean {
   const s = String(numFactura || '').toUpperCase();
   return s.startsWith('F201') || s.startsWith('F301');
