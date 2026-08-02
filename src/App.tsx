@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { supabase } from './lib/supabase';
+import { supabase, fetchAllRows } from './lib/supabase';
 import { Factura, Abono, Egreso, Categoria } from './types';
 import Sidebar from './components/Sidebar';
 import LoginOverlay from './components/LoginOverlay';
@@ -15,7 +15,8 @@ import {
   fmtFecha, 
   fmtMonto, 
   requiereDetraccionPEN, 
-  esAbonoDetraccionBN 
+  esAbonoDetraccionBN,
+  procesarEnLotes
 } from './lib/businessUtils';
 import * as XLSX from 'xlsx';
 import { 
@@ -119,24 +120,30 @@ export default function App() {
       // cada una esperaba a que la anterior terminara. Con Promise.all se lanzan
       // las 5 al mismo tiempo, así el tiempo total de carga es el de la consulta
       // más lenta, no la suma de las 5.
-      const [
-        { data: fdata, error: ferror },
-        { data: bdata, error: berror },
-        { data: cdata, error: cerror },
-        { data: edata, error: eerror },
-        { data: catData, error: catError }
-      ] = await Promise.all([
-        supabase.from('facturas').select('*').order('fecha_doc'),
-        supabase.from('abonos').select('*').order('fecha'),
-        supabase.from('conciliaciones').select('*'),
-        supabase.from('egresos').select('*').order('fecha'),
-        supabase.from('categorias').select('*').eq('activo', true).order('orden')
+      //
+      // FIX #9: cada consulta ahora usa fetchAllRows, que pagina con .range()
+      // hasta agotar la tabla en vez de traer un solo .select() truncado a 1000
+      // filas por Supabase. Los errores de cada tabla se propagan como excepción
+      // (fetchAllRows hace throw internamente), por eso ya no hay { error } que
+      // chequear a mano por cada una — cualquier fallo cae directo al catch de
+      // esta función.
+      const [fdata, bdata, cdata, edata, catData] = await Promise.all([
+        fetchAllRows<any>((from, to) =>
+          supabase.from('facturas').select('*').order('fecha_doc').range(from, to)
+        ),
+        fetchAllRows<any>((from, to) =>
+          supabase.from('abonos').select('*').order('fecha').range(from, to)
+        ),
+        fetchAllRows<any>((from, to) =>
+          supabase.from('conciliaciones').select('*').range(from, to)
+        ),
+        fetchAllRows<any>((from, to) =>
+          supabase.from('egresos').select('*').order('fecha').range(from, to)
+        ),
+        fetchAllRows<any>((from, to) =>
+          supabase.from('categorias').select('*').eq('activo', true).order('orden').range(from, to)
+        ),
       ]);
-      if (ferror) throw ferror;
-      if (berror) throw berror;
-      if (cerror) throw cerror;
-      if (eerror) throw eerror;
-      if (catError) throw catError;
       console.log('TIMING fetch Supabase (ms):', Math.round(performance.now() - __t0)); // TEMP TIMING
       const __t1 = performance.now(); // TEMP TIMING
 
@@ -203,7 +210,13 @@ export default function App() {
       // Si una sugerencia descontara saldo aquí, una factura recién liberada (p. ej. tras
       // un "Quitar") podía volver a marcarse como saldo 0 solo porque el motor de sugerencias
       // la reservó silenciosamente para otro abono pendiente, sin que el usuario confirmara nada.
-      initialAbonos.forEach(p => {
+      //
+      // FIX #10: este loop corre sugerirFactura sobre TODOS los abonos pendientes contra
+      // TODAS las facturas — con volúmenes grandes (cientos de abonos x miles de facturas)
+      // esto bloqueaba el hilo principal el tiempo suficiente para que el navegador mostrara
+      // "la página no responde". procesarEnLotes hace exactamente el mismo trabajo, pero
+      // fragmentado en tandas de 50, cediendo el hilo entre cada una.
+      await procesarEnLotes(initialAbonos, (p) => {
         if (p.estado === 'pendiente') {
           const sug = sugerirFactura(p, facturasConSaldos);
           if (sug) {
