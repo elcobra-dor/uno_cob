@@ -60,6 +60,7 @@ export default function App() {
   const [abonos, setAbonos] = useState<Abono[]>([]);
   const [egresos, setEgresos] = useState<Egreso[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [catalogoComercial, setCatalogoComercial] = useState<any[]>([]); // <--- NUEVO ESTADO AGREGADO
   const [interMap, setInterMap] = useState<{ [key: string]: string }>({});
   const [bdMap, setBdMap] = useState<{ [key: string]: any }>({});
 
@@ -115,19 +116,7 @@ export default function App() {
     const __t0 = performance.now(); // TEMP TIMING
 
     try {
-      // FIX #6: las 5 consultas son independientes entre sí (ninguna depende del
-      // resultado de otra), pero se disparaban una tras otra con `await` secuencial —
-      // cada una esperaba a que la anterior terminara. Con Promise.all se lanzan
-      // las 5 al mismo tiempo, así el tiempo total de carga es el de la consulta
-      // más lenta, no la suma de las 5.
-      //
-      // FIX #9: cada consulta ahora usa fetchAllRows, que pagina con .range()
-      // hasta agotar la tabla en vez de traer un solo .select() truncado a 1000
-      // filas por Supabase. Los errores de cada tabla se propagan como excepción
-      // (fetchAllRows hace throw internamente), por eso ya no hay { error } que
-      // chequear a mano por cada una — cualquier fallo cae directo al catch de
-      // esta función.
-      const [fdata, bdata, cdata, edata, catData] = await Promise.all([
+      const [fdata, bdata, cdata, edata, catData, catComercialData] = await Promise.all([
         fetchAllRows<any>((from, to) =>
           supabase.from('facturas').select('*').order('fecha_doc').range(from, to)
         ),
@@ -142,6 +131,9 @@ export default function App() {
         ),
         fetchAllRows<any>((from, to) =>
           supabase.from('categorias').select('*').eq('activo', true).order('orden').range(from, to)
+        ),
+        fetchAllRows<any>((from, to) =>
+          supabase.from('catalogo_comercial').select('*').range(from, to) // <--- NUEVA CONSULTA
         ),
       ]);
       console.log('TIMING fetch Supabase (ms):', Math.round(performance.now() - __t0)); // TEMP TIMING
@@ -204,18 +196,6 @@ export default function App() {
         f.saldo = Math.round(f.saldo * 100) / 100;
       });
 
-      // Apply dynamic suggestions for pending ones.
-      // IMPORTANTE: las sugerencias NUNCA deben descontar saldo en memoria.
-      // El saldo de una factura solo se reduce por abonos CONFIRMADOS (ver bloque anterior).
-      // Si una sugerencia descontara saldo aquí, una factura recién liberada (p. ej. tras
-      // un "Quitar") podía volver a marcarse como saldo 0 solo porque el motor de sugerencias
-      // la reservó silenciosamente para otro abono pendiente, sin que el usuario confirmara nada.
-      //
-      // FIX #10: este loop corre sugerirFactura sobre TODOS los abonos pendientes contra
-      // TODAS las facturas — con volúmenes grandes (cientos de abonos x miles de facturas)
-      // esto bloqueaba el hilo principal el tiempo suficiente para que el navegador mostrara
-      // "la página no responde". procesarEnLotes hace exactamente el mismo trabajo, pero
-      // fragmentado en tandas de 50, cediendo el hilo entre cada una.
       await procesarEnLotes(initialAbonos, (p) => {
         if (p.estado === 'pendiente') {
           const sug = sugerirFactura(p, facturasConSaldos);
@@ -224,7 +204,6 @@ export default function App() {
             p.motivo = sug.motivo;
             p.confianza = sug.confianza;
             p.estado = 'sugerida';
-            // Sin descuento de saldo: es solo una propuesta, no una asignación real.
           }
         }
       });
@@ -241,6 +220,7 @@ export default function App() {
       setAbonos(initialAbonos);
       setEgresos(egresosCargados);
       setCategorias(catData || []);
+      setCatalogoComercial(catComercialData || []); // <--- NUEVA ASIGNACIÓN
       setDbStatus('connected');
       showToast('Datos sincronizados correctamente', 'green');
       setTimeout(() => console.log('TIMING hasta despues de setState + 1 tick (ms):', Math.round(performance.now() - __t2)), 0); // TEMP TIMING
@@ -261,8 +241,6 @@ export default function App() {
   }, [userAuthenticated, cargarDesdeBD]);
 
   // 3. Reconciliation Actions
-  // FIX #1: calcula el importe realmente aplicado a cada factura (cobro parcial),
-  // en vez de guardar el saldo_original completo de la factura en cada línea.
   const handleConfirmar = async (id: number) => {
     const p = abonos.find(x => x.id === id);
     if (!p || !p.facturas.some(f => f.factura)) return;
@@ -291,13 +269,6 @@ export default function App() {
       const { error } = await supabase.from('conciliaciones').upsert(rows, { onConflict: 'operacion,factura' });
       if (error) throw error;
 
-      // FIX #5: se quitó el `await cargarDesdeBD()` de aquí. Esa función hacía 5 SELECT
-      // completos (facturas, abonos, conciliaciones, egresos, categorías) y volvía a correr
-      // el motor de sugerencias para TODOS los abonos pendientes contra TODAS las facturas
-      // en cada confirmación — con miles de registros acumulados, eso es lo que se sentía
-      // lento al guardar un match. Ahora se actualiza solo lo que realmente cambió:
-      // el saldo de la(s) factura(s) afectada(s), este abono puntual, y se re-evalúa la
-      // sugerencia únicamente en los abonos que apuntaban a esas mismas facturas.
       const facturasAfectadas = new Set(rows.map(r => r.factura));
       const cobroPorFactura: { [factura: string]: number } = {};
       rows.forEach(r => {
@@ -321,8 +292,6 @@ export default function App() {
             motivo: 'Guardado'
           };
         }
-        // Solo re-evaluar sugerencia si este abono pendiente/sugerido apuntaba a
-        // alguna de las facturas cuyo saldo acaba de cambiar.
         if ((a.estado === 'pendiente' || a.estado === 'sugerida') &&
             a.facturas.some(f => facturasAfectadas.has(f.factura))) {
           const sug = sugerirFactura(a, facturasActualizadas);
@@ -402,7 +371,6 @@ export default function App() {
     }
   };
 
-  // Multiple Line/Split Invoice Logic in local state
   const handleAgregarLinea = (id: number) => {
     setAbonos(prev => prev.map(p => {
       if (p.id === id) {
@@ -568,7 +536,7 @@ export default function App() {
     });
   };
 
-  // 6. Excel Uplod Processing
+  // 6. Excel Upload Processing (Semáforo Inteligente)
   const handleCargarFacturas = async (file: File) => {
     const rows = await parseExcel(file);
     if (!rows.length) {
@@ -577,16 +545,16 @@ export default function App() {
     }
 
     const headers = Object.keys(rows[0]);
+    // Detectores de tipo de archivo
     const esContable = headers.includes('SALDO_S') && headers.includes('SERIE') && headers.includes('NUMERO');
-    const esComercial = headers.includes('SERIE_DOC') && headers.includes('NUMERO_DOC');
+    const esBaseComercial = headers.includes('SERIE_DOC') && headers.includes('NUMERO_DOC') && headers.includes('COD_PROD');
+    const esCatalogo = headers.includes('Producto') && headers.includes('Rubro') && headers.includes('GG');
 
     const limpiarDocNum = (serie: any, numero: any) => {
       const s = String(serie || '').trim().replace(/^0+/, '');
       const n = String(numero || '').trim().replace(/^0+/, '').padStart(8, '0');
-      
       if (!s && n === '00000000') return null;
       if (!s) return n;
-      
       return `${s}-${n}`;
     };
     
@@ -594,9 +562,11 @@ export default function App() {
       return String(r['GLOSA'] || r['Glosa'] || r['glosa'] || r['DESCRIPCION'] || r['Descripcion'] || '').trim();
     };
 
+    let procesado = false;
     let nuevas: any[] = [];
     let nuevasComercial: any[] = [];
 
+    // FLUJO 1: PROCESAMIENTO DE SALDOS CONTABLES
     if (esContable) {
       const resumenContable: { [key: string]: any } = {};
       rows.forEach(r => {
@@ -608,17 +578,11 @@ export default function App() {
 
         if (!resumenContable[codFactura] || saldoFila < resumenContable[codFactura].saldo) {
           resumenContable[codFactura] = {
-            factura: codFactura,
-            razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-            fecha_doc: fmtFecha(r['FECHA_DOC']),
-            fecha_ven: fmtFecha(r['FECHA_VEN']),
-            saldo: saldoFila,
-            mes: parseInt(r['MES']) || 0,
-            moneda: esDolares ? 'USD' : 'PEN',
-            glosa: atraparGlosa(r),
-            tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || 0),
-            ruc: String(r['RUC'] || '').trim(),
-            cuenta_contable: String(r['CUENTA'] || '').trim()
+            factura: codFactura, razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
+            fecha_doc: fmtFecha(r['FECHA_DOC']), fecha_ven: fmtFecha(r['FECHA_VEN']),
+            saldo: saldoFila, mes: parseInt(r['MES']) || 0, moneda: esDolares ? 'USD' : 'PEN',
+            glosa: atraparGlosa(r), tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || 0),
+            ruc: String(r['RUC'] || '').trim(), cuenta_contable: String(r['CUENTA'] || '').trim()
           };
         }
       });
@@ -626,67 +590,91 @@ export default function App() {
 
       const { error } = await supabase.from('facturas').upsert(nuevas, { onConflict: 'factura' });
       if (error) throw error;
-      showToast(`Procesadas ${nuevas.length} facturas con éxito.`, 'green');
+      showToast(`Procesadas ${nuevas.length} facturas contables con éxito.`, 'green');
+      procesado = true;
+    }
 
-    } else if (esComercial) {
-      // FIX: el archivo comercial NUNCA debe tocar la tabla `facturas` (la de cobranza).
-      // Ese archivo no tiene concepto de "saldo pendiente" (solo TOTAL de venta), así que
-      // insertar/actualizar ahí resucitaba facturas ya canceladas como si tuvieran saldo,
-      // y además podía sobrescribir RUC/razón social con datos vacíos de ese archivo.
-      // Ahora se guarda línea por línea (una factura puede tener 2+ líneas de producto)
-      // en una tabla separada, exclusiva para reportes de producto/rubro de ingreso.
+    // FLUJO 2: PROCESAMIENTO DEL CATÁLOGO COMERCIAL
+    if (esCatalogo) {
+      const nuevosCat = rows.map(r => ({
+        producto: String(r['Producto'] || '').trim(),
+        tesoreria: String(r['Tesoreria'] || '').trim(),
+        rubro: String(r['Rubro'] || '').trim(),
+        gg: String(r['GG'] || '').trim()
+      })).filter(x => x.producto);
+
+      const { error } = await supabase.from('catalogo_comercial').upsert(nuevosCat, { onConflict: 'producto' });
+      if (error) throw error;
+      
+      showToast('Catálogo Comercial actualizado correctamente.', 'green');
+      await cargarDesdeBD(); // Recarga estado local inmediatamente
+      procesado = true;
+    }
+
+    // FLUJO 3: PROCESAMIENTO BASE COMERCIAL (Reportes con Cruce VLOOKUP)
+    if (esBaseComercial) {
+      const mesesDict: { [key: string]: string } = {
+        '01': 'Enero', '02': 'Febrero', '03': 'Marzo', '04': 'Abril',
+        '05': 'Mayo', '06': 'Junio', '07': 'Julio', '08': 'Agosto',
+        '09': 'Septiembre', '10': 'Octubre', '11': 'Noviembre', '12': 'Diciembre'
+      };
+
       nuevasComercial = rows.map(r => {
         const codFactura = limpiarDocNum(r['SERIE_DOC'], r['NUMERO_DOC']);
+        const codProd = String(r['COD_PROD'] || '').trim();
+        const descProd = String(r['DESC_PROD'] || '').trim();
+        
+        // Simular un BUSCARV (VLOOKUP) en el catálogo en memoria
+        const llaveExacta = `${codProd} - ${descProd}`;
+        let infoCat = catalogoComercial.find(c => c.producto === llaveExacta);
+        
+        if (!infoCat) {
+          // Si no halla el exacto, busca por prefijo de la raíz (Ej: 01001007 coincide en 01001000)
+          infoCat = catalogoComercial.find(c => {
+             const catCod = c.producto.split('-')[0].trim();
+             return catCod && codProd.startsWith(catCod.slice(0, 5)); 
+          });
+        }
+        
+        const mesTxt = String(r['MES'] || '').trim();
+        const totalVenta = parseFloat(String(r['TOTAL'] || 0).replace(/,/g, ''));
+
         return {
-          periodo: parseInt(r['PERIODO']) || null,
-          mes: parseInt(r['MES']) || null,
-          fecha_doc: fmtFecha(r['FECHA_DOC']),
+          factura: codFactura,
           ruc: String(r['RUC'] || '').trim(),
           razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-          cod_entidad: String(r['COD_ENTIDAD'] || '').trim(),
-          desc_entidad: String(r['DESC_ENTIDAD'] || '').trim(),
-          cod_almacen: String(r['COD_ALMACEN'] || '').trim(),
-          desc_almacen: String(r['DESC_ALMACEN'] || '').trim(),
-          c_costos: String(r['C_COSTOS'] || '').trim(),
-          desc_c_costos: String(r['DESC_C_COSTOS'] || '').trim(),
-          c_costos_2: String(r['C_COSTOS_2'] || '').trim(),
-          desc_c_costos_2: String(r['DESC_C_COSTOS_2'] || '').trim(),
-          cod_mov: String(r['COD_MOV'] || '').trim(),
-          desc_mov: String(r['DESC_MOV'] || '').trim(),
-          doc: String(r['DOC'] || '').trim(),
-          desc_doc: String(r['DESC_DOC'] || '').trim(),
-          serie_doc: String(r['SERIE_DOC'] || '').trim(),
-          numero_doc: String(r['NUMERO_DOC'] || '').trim(),
-          factura: codFactura,
-          cod_prod: String(r['COD_PROD'] || '').trim(),
-          desc_prod: String(r['DESC_PROD'] || '').trim(),
-          cod_lote: String(r['COD_LOTE'] || '').trim(),
-          fecha_venc_lote: fmtFecha(r['FECHA_VENC_LOTE']),
-          cod_laborat: String(r['COD_LABORAT'] || '').trim(),
-          cod_medida: String(r['COD_MEDIDA'] || '').trim(),
-          desc_medida: String(r['DESC_MEDIDA'] || '').trim(),
-          cod_familia: String(r['COD_FAMILIA'] || '').trim(),
-          desc_familia: String(r['DESC_FAMILIA'] || '').trim(),
-          neto: parseFloat(r['NETO'] || 0),
-          igv: parseFloat(r['IGV'] || 0),
-          inafecto: parseFloat(r['INAFECTO'] || 0),
-          exonerado: parseFloat(r['EXONERADO'] || 0),
-          isc: parseFloat(r['ISC'] || 0),
-          total: parseFloat(r['TOTAL'] || 0),
-          cantidad: parseFloat(r['CANTIDAD'] || 0),
-          valor_unitario: parseFloat(r['VALOR_UNITARIO'] || 0),
-          precio_unitario: parseFloat(r['PRECIO_UNITARIO'] || 0),
-          valor_venta: parseFloat(r['VALOR_VENTA'] || 0),
-          precio_venta: parseFloat(r['PRECIO_VENTA'] || 0),
-          vendedor: String(r['VENDEDOR'] || '').trim()
+          fecha_doc: fmtFecha(r['FECHA_DOC']),
+          
+          proceso: 'Facturacion',
+          gg: infoCat ? infoCat.gg : 'Sin Clasificar',
+          rubro: infoCat ? infoCat.rubro : 'Sin Clasificar',
+          sector: String(r['DESC_C_COSTOS_2'] || '').trim(),
+          comite: String(r['DESC_ALMACEN'] || '').trim(),
+          
+          ano_emision: parseInt(r['PERIODO']) || 0,
+          ano_pago: parseInt(r['PERIODO']) || 0, 
+          mes_pago: mesesDict[mesTxt] || mesTxt,
+          
+          cod_prod: codProd,
+          desc_prod: descProd,
+          vendedor: String(r['VENDEDOR'] || '').trim(),
+          
+          compromiso_s: totalVenta,
+          importe_bruto: totalVenta,
+          venta_neta: parseFloat(String(r['NETO'] || 0).replace(/,/g, '')),
+          igv: parseFloat(String(r['IGV'] || 0).replace(/,/g, '')),
+          total_soles: totalVenta
         };
       }).filter(f => f.factura);
 
       const { error } = await supabase.from('facturas_comercial').insert(nuevasComercial);
       if (error) throw error;
-      showToast(`Procesadas ${nuevasComercial.length} líneas comerciales con éxito (solo reportes, no afecta cobranza).`, 'green');
+      
+      showToast(`Procesadas ${nuevasComercial.length} líneas comerciales con cruce automático.`, 'green');
+      procesado = true;
+    }
 
-    } else {
+    if (!procesado) {
       alert('Archivo de facturas no reconocido. Verifica las cabeceras.');
       return;
     }
@@ -748,7 +736,6 @@ export default function App() {
             return;
           }
 
-          // TEMP DEBUG — quitar después de confirmar
           console.log('DEBUG deteccion', { esBbva, esScotiabank, esInterbank, esNacion, headerIdx, filaHeader: rawData[headerIdx] });
 
           const nuevos: any[] = [];
@@ -869,17 +856,10 @@ export default function App() {
             const colOrd = headers.findIndex(h => h === 'ordenante');
             const colMoneda = headers.findIndex(h => h === 'moneda' || h.includes('moneda'));
             const opIndex = colOp !== -1 ? colOp : headers.findIndex(h => h.includes('operaci'));
-            // FIX #4: se agregó captura de Cuenta/Banco/Saldo. El número de operación del banco
-            // NO es único por sí solo (ej. "INT PLAZO" se repite igual en varias cuentas el mismo
-            // día; "COMIS PAGO DETRACCION" puede repetirse igual, misma fecha, mismo monto, mismo
-            // día, en la MISMA cuenta). El Saldo corriente es lo único que distingue esos casos
-            // porque es acumulativo: dos movimientos reales distintos siempre dejan un saldo distinto.
             const colCuenta = headers.findIndex(h => h === 'cuenta' || h.includes('cuenta'));
             const colBanco = headers.findIndex(h => h === 'banco' || h.includes('banco'));
             const colSaldo = headers.findIndex(h => h.includes('saldo'));
             
-            let contPEN = 0, contUSD = 0;
-
             for (let i = headerIdx + 1; i < rawData.length; i++) {
               const r = rawData[i];
               if (!r || r.length === 0) continue;
@@ -889,7 +869,6 @@ export default function App() {
 
               const montoVal = limpiarMonto(r[colMonto]);
               let opVal = String(r[opIndex] || '').trim();
-              // Blindaje para operaciones genéricas del banco (BATCH)
               if (opVal === '00000000' || opVal === '000-000' || opVal === '0') {
               const fechaParaId = String(r[colFecha] || '').replace(/\D/g, '');
               opVal = `BATCH-${fechaParaId}-${i}`;
@@ -902,7 +881,6 @@ export default function App() {
                 const txtMoneda = String(r[colMoneda] || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
                 monedaFila = (txtMoneda.includes('DOLAR') || txtMoneda.includes('USD')) ? 'USD' : 'PEN';
               }
-              if (monedaFila === 'USD') contUSD++; else contPEN++;
 
               const obj = {
                 operacion: opVal,
@@ -917,7 +895,6 @@ export default function App() {
                 saldo: colSaldo !== -1 ? limpiarMonto(r[colSaldo]) : 0
               };
 
-              // TEMP DEBUG — quitar después de confirmar
               console.log('DEBUG fila', i, { opVal, cuenta: obj.cuenta, banco: obj.banco, saldo: obj.saldo, montoVal });
 
               if (montoVal > 0) {
@@ -928,20 +905,8 @@ export default function App() {
             }
           }
 
-          // TEMP DEBUG — quitar después de confirmar
           console.log('DEBUG conteo final', { totalFilas: rawData.length - headerIdx - 1, nuevos: nuevos.length, egresosRaw: egresosRaw.length });
 
-          // Inserción en Supabase
-          // FIX #2: se quitó `ignoreDuplicates: true`. Con ese flag, si el número de operación
-          // ya existía en la tabla `abonos`, Supabase IGNORABA la fila nueva y nunca actualizaba
-          // banco/glosa/descripcion, aunque volvieras a subir el Libro Mayor corregido.
-          // El estado de conciliación vive aparte, en la tabla `conciliaciones`, así que
-          // actualizar `abonos` aquí es seguro y no borra conciliaciones ya confirmadas.
-          // FIX #3: se cambió el onConflict de 'operacion' a 'operacion,fecha,monto'.
-          // Varios bancos repiten el mismo número de operación en movimientos DISTINTOS
-          // (comisiones, ITF, cargos por lote). Con onConflict solo en 'operacion', el
-          // upsert pisaba silenciosamente esas filas en vez de insertarlas como nuevas.
-          // Requiere el UNIQUE (operacion, fecha, monto) creado en la tabla vía migración SQL.
           const { error: abonosErr } = await supabase.from('abonos').upsert(nuevos, { onConflict: 'operacion,fecha,monto,cuenta,saldo' });
           if (abonosErr) throw abonosErr;
 
@@ -980,7 +945,6 @@ export default function App() {
       }
     }
 
-    // Process rows
     const localInterMap: { [key: string]: string } = {};
     rawData.forEach((row: any) => {
       const keys = Object.keys(row);
@@ -1064,7 +1028,6 @@ export default function App() {
           let insertadas = 0;
           const totalOps = ops.length;
 
-          // Prepare records for database insertion
           const rowsToInsert: any[] = [];
           for (const operacion of ops) {
             const data = backup.confirmaciones[operacion];
@@ -1086,7 +1049,6 @@ export default function App() {
           }
 
           if (rowsToInsert.length > 0) {
-            // Bulk upsert into conciliaciones table
             const { error } = await supabase
               .from('conciliaciones')
               .upsert(rowsToInsert, { onConflict: 'operacion,factura' });
@@ -1112,7 +1074,6 @@ export default function App() {
 
   const handleProcesarYCerrar = async () => {
     await cargarDesdeBD();
-    // Merge interbancarios and ordenantes local state
     if (Object.keys(interMap).length > 0) {
       setAbonos(prev => prev.map(p => {
         const opClean = String(p.operacion).trim().replace(/^0+/, '');
@@ -1125,7 +1086,6 @@ export default function App() {
 
   // 7. Data Export Utilities
   const handleExportarCSV = () => {
-    // 1. Cabeceras con el orden exacto del Libro Mayor
     const headers = [
       'Banco',
       'Cuenta',
@@ -1141,7 +1101,6 @@ export default function App() {
     const rows = [headers];
 
     abonos.forEach(p => {
-      // EXTRACCIÓN ESTRICTA DE LA GLOSA (Ej: "BCP 010 08/06/2026 09639958")
       const glosaParts = String(p.glosa || '').trim().split(/\s+/);
       const banco = glosaParts[0] ? glosaParts[0].toUpperCase() : '';
       const cuenta = glosaParts[1] ? glosaParts[1] : '';
@@ -1150,20 +1109,17 @@ export default function App() {
       const fecha = p.fecha || '';
       const descripcion = p.descripcion || '';
       
-      // Número de operación siempre forzado a 8 dígitos con ceros a la izquierda
       const operacionFmt = String(p.operacion || '').trim().padStart(8, '0');
       const ordenante = p.ordenante || '';
 
       const facturasValidas = (p.facturas || []).filter(f => f.factura);
 
-      // CASO A: Abono sin asignar (huérfano)
       if (facturasValidas.length === 0) {
         rows.push([
           banco, cuenta, moneda, fecha, descripcion, 
           p.monto.toFixed(2), operacionFmt, ordenante, '', 'pendiente'
         ]);
       } 
-      // CASO B: Abono cruzado con 1 o más facturas
       else {
         let sumaAplicada = 0;
         const distribuido = p.monto / facturasValidas.length;
@@ -1188,7 +1144,6 @@ export default function App() {
 
           sumaAplicada += montoAplicado;
 
-          // FORMATEO ESTRICTO DE FACTURA: FXXX-00000000
           let facturaFmt = '';
           if (f.factura === 'NO_OPERATIVO') {
               facturaFmt = 'NO_OPERATIVO';
@@ -1211,7 +1166,6 @@ export default function App() {
           ]);
         });
 
-        // LÓGICA DE SALDO PENDIENTE (Nueva fila con vuelto)
         const saldoRestante = p.monto - sumaAplicada;
         if (saldoRestante > 0.01) {
           rows.push([
@@ -1230,6 +1184,7 @@ export default function App() {
     link.click();
     showToast('CSV para Libro Mayor exportado ✓', 'green');
   };
+
   const handleExportarSistema = () => {
     const confirmados = abonos.filter(
       p => (p.estado === 'confirmado' || p.estado === 'manual') && p.facturas && p.facturas.some(f => f.factura && f.factura !== 'NO_OPERATIVO')
@@ -1246,7 +1201,6 @@ export default function App() {
       const glosaMayor = String(p.glosa || p.descripcion || '').trim();
       const partesGlosa = glosaMayor.split(/\s+/);
       
-      // EXTRACCIÓN BLINDADA ANTI-BASURA: Solo letras para banco, solo números para cuenta
       const bancoBruto = partesGlosa[0] ? partesGlosa[0].replace(/[^A-Za-z]/g, '') : '';
       const bancoTresLetras = bancoBruto.toUpperCase().substring(0, 3);
       
@@ -1260,15 +1214,10 @@ export default function App() {
 
       const facturasValidas = p.facturas.filter(f => f.factura && f.factura !== 'NO_OPERATIVO');
       const totalAbono = p.monto;
-      // FIX #1 (fallback): solo se usa el reparto parejo si por algún motivo la línea
-      // no trae un importe_factura guardado (ej. registros antiguos/backups viejos).
       const distribuido = facturasValidas.length > 0 ? (totalAbono / facturasValidas.length) : totalAbono;
 
       facturasValidas.forEach(linea => {
         const fDB = facturas.find(x => x.factura === linea.factura) || {};
-
-        // FIX #1: usar el importe realmente aplicado a ESTA factura (guardado en
-        // conciliaciones.importe_factura vía handleConfirmar), no el reparto parejo.
         const importeLinea = (linea as any).importe_factura;
         const montoAplicado = (importeLinea !== undefined && importeLinea !== null && importeLinea !== 0)
           ? parseFloat(String(importeLinea))
@@ -1282,16 +1231,9 @@ export default function App() {
         const tipoDoc = esBoleta ? '03' : '01';
         const cuenta6_final = fDB.cuenta_contable ? fDB.cuenta_contable : (esBoleta ? '121203' : '121201');
 
-        // FIX #2: la moneda que decide el reparto entre "Importe documento" (soles)
-        // y "dolares" es la moneda REAL del abono (p.moneda), no la moneda de la
-        // cuenta bancaria (configCta.mon) — ambas suelen coincidir, pero la fuente
-        // correcta del dato es el pago, no la cuenta.
         const pagoEsDolares = p.moneda === 'USD';
         const montoAplicadoStr = montoAplicado.toFixed(2);
 
-        // IMPORTE (col 7) siempre lleva el monto realmente abonado, sin condicionar por moneda.
-        // Ese mismo monto se replica en Importe documento (col 18) si el pago es en soles,
-        // o en dolares (col 19) si el pago es en dólares; la columna que no aplica queda vacía.
         const impSoles = !pagoEsDolares ? montoAplicadoStr : '';
         const impDolares = pagoEsDolares ? montoAplicadoStr : '';
 
@@ -1574,7 +1516,7 @@ export default function App() {
       {/* Floating Interactive Toast Alerts */}
       {toast && (
         <div 
-          className={`fixed bottom-6 right-6 z-9999 px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-2.5 border transition-all duration-300 transform translate-y-0 opacity-100 ${
+          className={`fixed bottom-6 right-6 z-[9999] px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-2.5 border transition-all duration-300 transform translate-y-0 opacity-100 ${
             toast.type === 'green' 
               ? 'bg-emerald-50 border-emerald-150 text-emerald-800' 
               : toast.type === 'amber' 
