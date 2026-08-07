@@ -602,17 +602,29 @@ export default function App() {
 
     // FLUJO 2: PROCESAMIENTO DEL CATÁLOGO COMERCIAL
     if (esCatalogo) {
-      const nuevosCat = rows.map(r => ({
-        producto: String(r['Producto'] || '').trim(),
-        tesoreria: String(r['Tesoreria'] || '').trim(),
-        rubro: String(r['Rubro'] || '').trim(),
-        gg: String(r['GG'] || '').trim()
-      })).filter(x => x.producto);
+      // 1. Usamos un objeto para filtrar duplicados automáticamente
+      const catalogoUnico: { [key: string]: any } = {};
+      
+      rows.forEach(r => {
+        const prod = String(r['Producto'] || '').trim();
+        if (prod) {
+          catalogoUnico[prod] = {
+            producto: prod,
+            tesoreria: String(r['Tesoreria'] || '').trim(),
+            rubro: String(r['Rubro'] || '').trim(),
+            gg: String(r['GG'] || '').trim()
+          };
+        }
+      });
 
+      // 2. Convertimos el objeto limpio de vuelta a un arreglo
+      const nuevosCat = Object.values(catalogoUnico);
+
+      // 3. Enviamos a Supabase sin miedo a duplicados
       const { error } = await supabase.from('catalogo_comercial').upsert(nuevosCat, { onConflict: 'producto' });
       if (error) throw error;
       
-      showToast('Catálogo Comercial actualizado correctamente.', 'green');
+      showToast(`Catálogo Comercial (${nuevosCat.length} únicos) actualizado correctamente.`, 'green');
       await cargarDesdeBD(); // Recarga estado local inmediatamente
       procesado = true;
     }
