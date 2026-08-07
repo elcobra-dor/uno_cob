@@ -248,7 +248,15 @@ export default function Egresos({
 
                   {!isConfirmed && (
                     <button
-                      onClick={() => onConfirmarEgreso(e.id)}
+                      onClick={() => {
+                        // LA MAGIA OCURRE AQUÍ: Si hay sugerencia y no hiciste clic, la pre-cargamos para el cerebro
+                        if (!e.categoria_id && sug) {
+                          onCambiarCategoriaEgreso(e.id, sug.id);
+                          e.categoria_id = sug.id;
+                          e.categoria_nombre = `${sug.grupo}${sug.subgrupo ? ` / ${sug.subgrupo}` : ''}`;
+                        }
+                        onConfirmarEgreso(e.id);
+                      }}
                       disabled={!e.categoria_id && !sug}
                       className={`px-4 py-2 rounded-xl text-xs font-semibold font-mono tracking-wide flex items-center justify-center gap-1 cursor-pointer transition-all ${
                         (e.categoria_id || sug) 
