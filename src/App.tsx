@@ -117,7 +117,7 @@ export default function App() {
     const __t0 = performance.now(); // TEMP TIMING
 
     try {
-      const [fdata, bdata, cdata, edata, catData, catComercialData] = await Promise.all([
+      const [fdata, bdata, cdata, edata, catData, catComercialData, factComercialData] = await Promise.all([
         fetchAllRows<any>((from, to) =>
           supabase.from('facturas').select('*').order('fecha_doc').range(from, to)
         ),
@@ -135,6 +135,10 @@ export default function App() {
         ),
         fetchAllRows<any>((from, to) =>
           supabase.from('catalogo_comercial').select('*').range(from, to) // <--- NUEVA CONSULTA
+        ),
+        // <--- NUEVA CONSULTA ABAJO --->
+        fetchAllRows<any>((from, to) =>
+          supabase.from('facturas_comercial').select('*').range(from, to)
         ),
       ]);
       console.log('TIMING fetch Supabase (ms):', Math.round(performance.now() - __t0)); // TEMP TIMING
@@ -222,6 +226,7 @@ export default function App() {
       setEgresos(egresosCargados);
       setCategorias(catData || []);
       setCatalogoComercial(catComercialData || []); // <--- NUEVA ASIGNACIÓN
+      setFacturasComercial(factComercialData || []); // <--- AÑADIR ESTA LÍNEA
       setDbStatus('connected');
       showToast('Datos sincronizados correctamente', 'green');
       setTimeout(() => console.log('TIMING hasta despues de setState + 1 tick (ms):', Math.round(performance.now() - __t2)), 0); // TEMP TIMING
@@ -1485,9 +1490,13 @@ export default function App() {
               )}
 
               {currentPage === 'reportes' && (
-                <Reportes facturas={facturas} abonos={abonos} />
+                <Reportes 
+                  facturas={facturas} 
+                  abonos={abonos} 
+                  datosComerciales={facturasComercial} 
+                />
               )}
-
+              
               {currentPage === 'asistente-ai' && (
                 <AsistenteAI 
                   abonos={abonos}
