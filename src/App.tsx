@@ -452,16 +452,44 @@ export default function App() {
   };
 
   const handleConfirmarEgreso = async (id: string) => {
-    const e = egresos.find(x => x.id === id);
-    if (!e || !e.categoria_id) {
+    // -------------------------------------------------------------
+    // BLOQUE MODIFICADO: LÓGICA INTELIGENTE DE SUGERENCIAS
+    // -------------------------------------------------------------
+    const e: any = egresos.find(x => x.id === id);
+    if (!e) return;
+
+    let catIdFinal = e.categoria_id;
+    let catNombreFinal = e.categoria_nombre;
+
+    // Si no se hizo clic manualmente (catIdFinal vacío), intentamos rescatar la sugerencia
+    if (!catIdFinal) {
+      const textoSugerencia = e.categoria_sugerida || e.sugerencia || '';
+      
+      // Buscamos si la sugerencia en texto coincide con alguna categoría real
+      const matchCat = categorias.find(c => 
+        c.id === e.categoria_sugerida_id || 
+        (textoSugerencia && c.grupo?.toLowerCase() === String(textoSugerencia).toLowerCase())
+      );
+
+      if (matchCat) {
+        catIdFinal = matchCat.id;
+        catNombreFinal = `${matchCat.grupo}${matchCat.subgrupo ? ` / ${matchCat.subgrupo}` : ''}`;
+      } else if (e.categoria_sugerida_id) {
+        // En caso de que sí traiga un ID sugerido directo de la BD
+        catIdFinal = e.categoria_sugerida_id;
+        catNombreFinal = e.categoria_sugerida_nombre || textoSugerencia;
+      }
+    }
+
+    if (!catIdFinal) {
       alert('Por favor selecciona una categoría presupuestaria antes de confirmar.');
       return;
     }
 
     try {
       const { error } = await supabase.from('egresos').update({
-        categoria_id: e.categoria_id,
-        categoria_nombre: e.categoria_nombre,
+        categoria_id: catIdFinal,
+        categoria_nombre: catNombreFinal,
         estado: 'confirmado'
       }).eq('id', id);
 
