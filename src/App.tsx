@@ -1505,7 +1505,8 @@ export default function App() {
                 <Reportes 
                   facturas={facturas} 
                   abonos={abonos} 
-                  datosComerciales={facturasComercial} 
+                  datosComerciales={facturasComercial}
+                  catalogo={catalogoComercial} // <--- AÑADIR ESTA LÍNEA
                 />
               )}
               
