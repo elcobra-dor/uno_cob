@@ -61,6 +61,7 @@ export default function App() {
   const [egresos, setEgresos] = useState<Egreso[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [catalogoComercial, setCatalogoComercial] = useState<any[]>([]); // <--- NUEVO ESTADO AGREGADO
+  const [facturasComercial, setFacturasComercial] = useState<any[]>([]); // <--- NUEVO ESTADO
   const [interMap, setInterMap] = useState<{ [key: string]: string }>({});
   const [bdMap, setBdMap] = useState<{ [key: string]: any }>({});
 
