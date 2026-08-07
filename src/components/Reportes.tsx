@@ -1,79 +1,102 @@
 import React, { useMemo, useState } from 'react';
 
-interface FilaComercial {
-  proceso: string;
-  gg: string;
-  rubro: string;
-  ano_emision: number;
-  ano_pago: number;
-  mes_pago: string;
-  compromiso_s: number;
-  amortizacion_s: number;
-  saldo_s: number;
-  importe_bruto: number;
-}
-
 interface ReportesProps {
   facturas: any[];
   abonos: any[];
-  datosComerciales?: FilaComercial[];
+  datosComerciales?: any[];
+  catalogo?: any[];
 }
 
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
-export default function Reportes({ datosComerciales = [] }: ReportesProps) {
+export default function Reportes({ facturas = [], datosComerciales = [], catalogo = [] }: ReportesProps) {
   const [filtroAnoPago, setFiltroAnoPago] = useState<number>(2026);
   
   // =========================================================
-  // MODELO 1: RESUMEN MACRO (Facturación vs Cobranza vs CxC)
+  // 1. CREAR DICCIONARIOS DE BÚSQUEDA RÁPIDA (EL PUENTE)
   // =========================================================
-  const reporteMacro = useMemo(() => {
-    const agrupado: { [ano: number]: { facturacion: number, cobranza: number, cxc: number } } = {};
-    
-    datosComerciales.forEach(row => {
-      const ano = row.ano_emision;
-      if (!ano) return;
-      if (!agrupado[ano]) agrupado[ano] = { facturacion: 0, cobranza: 0, cxc: 0 };
-      
-      agrupado[ano].facturacion += (row.compromiso_s || 0);
-      agrupado[ano].cobranza += Math.abs(row.amortizacion_s || 0);
-      agrupado[ano].cxc += (row.saldo_s || 0);
+  
+  // A. Diccionario de Catálogo: Busca un "Producto" y devuelve su "Rubro y GG"
+  const diccCatalogo = useMemo(() => {
+    const mapa: { [producto: string]: { rubro: string, gg: string } } = {};
+    catalogo.forEach(row => {
+      if (row.producto) {
+        mapa[row.producto] = { rubro: row.rubro, gg: row.gg };
+      }
     });
+    return mapa;
+  }, [catalogo]);
 
-    return Object.entries(agrupado)
-      .sort(([a], [b]) => Number(b) - Number(a))
-      .map(([ano, totales]) => ({ ano, ...totales }));
+  // B. Diccionario Comercial: Busca un "Número de Factura" y devuelve el "Producto"
+  const diccComercial = useMemo(() => {
+    const mapa: { [idFactura: string]: string } = {};
+    datosComerciales.forEach(row => {
+      // OJO: Cambia 'serie_doc' y 'num_doc' por los nombres reales de tus columnas en el Excel Comercial
+      const idFact = `${row.serie_doc}-${row.num_doc}`; 
+      if (row.producto) {
+        mapa[idFact] = row.producto;
+      }
+    });
+    return mapa;
   }, [datosComerciales]);
 
   // =========================================================
-  // MODELO 2: MATRIZ DE COBRANZA POR RUBRO
+  // 2. PROCESAR EL DINERO REAL DE LA TABLA 'FACTURAS'
   // =========================================================
-  const matrizCobranza = useMemo(() => {
-    const dataFiltrada = datosComerciales.filter(r => 
-      r.proceso === 'Cobranza' && r.ano_pago === filtroAnoPago
-    );
-
+  
+  const datosProcesados = useMemo(() => {
+    const macro: { [ano: number]: { facturacion: number, cobranza: number, cxc: number } } = {};
     const matriz: { [rubro: string]: { [mes: string]: number, total: number } } = {};
     const totalesMes: { [mes: string]: number } = {};
-    let granTotal = 0;
+    let granTotalMatriz = 0;
 
-    dataFiltrada.forEach(row => {
-      const rubro = row.rubro || 'Sin Rubro';
-      const mes = row.mes_pago;
-      const monto = Math.abs(row.importe_bruto || 0);
+    facturas.forEach(fac => {
+      // 1. Identificar Factura
+      const anoEmision = fac.fecha_doc ? new Date(fac.fecha_doc).getFullYear() : 2025;
+      const mesCobranza = fac.fecha_doc ? MESES[new Date(fac.fecha_doc).getMonth()] : 'Enero'; // Ideal usar fecha de pago si existe
+      
+      // OJO: Asegúrate que estos coincidan con tu tabla 'facturas' oficial
+      const idFact = `${fac.serie_doc}-${fac.num_doc}`; 
+      
+      // 2. Extraer Dinero Real (Contable)
+      const facturadoReal = Number(fac.total || 0);
+      const cxcReal = Number(fac.saldo || 0);
+      const cobranzaReal = facturadoReal - cxcReal; // Lo que ya se pagó
 
-      if (!matriz[rubro]) matriz[rubro] = { total: 0 };
-      
-      matriz[rubro][mes] = (matriz[rubro][mes] || 0) + monto;
-      matriz[rubro].total += monto;
-      
-      totalesMes[mes] = (totalesMes[mes] || 0) + monto;
-      granTotal += monto;
+      // 3. Buscar Rubro a través del puente
+      const producto = diccComercial[idFact];
+      const infoCatalogo = producto ? diccCatalogo[producto] : null;
+      const rubroFinal = infoCatalogo?.rubro || 'Sin Rubro Asignado';
+
+      // --- ALIMENTAR TABLA 1 (MACRO) ---
+      if (!macro[anoEmision]) macro[anoEmision] = { facturacion: 0, cobranza: 0, cxc: 0 };
+      macro[anoEmision].facturacion += facturadoReal;
+      macro[anoEmision].cobranza += cobranzaReal;
+      macro[anoEmision].cxc += cxcReal;
+
+      // --- ALIMENTAR TABLA 2 (MATRIZ POR RUBRO) ---
+      // Si quieres que el filtro funcione por año de cobro o emisión, lo validamos aquí
+      if (anoEmision === filtroAnoPago) {
+        if (!matriz[rubroFinal]) matriz[rubroFinal] = { total: 0 };
+        matriz[rubroFinal][mesCobranza] = (matriz[rubroFinal][mesCobranza] || 0) + cobranzaReal;
+        matriz[rubroFinal].total += cobranzaReal;
+        
+        totalesMes[mesCobranza] = (totalesMes[mesCobranza] || 0) + cobranzaReal;
+        granTotalMatriz += cobranzaReal;
+      }
     });
 
-    return { matriz, totalesMes, granTotal };
-  }, [datosComerciales, filtroAnoPago]);
+    return { 
+      macro: Object.entries(macro).sort(([a], [b]) => Number(b) - Number(a)).map(([ano, totales]) => ({ ano, ...totales })), 
+      matriz, 
+      totalesMes, 
+      granTotalMatriz 
+    };
+  }, [facturas, diccComercial, diccCatalogo, filtroAnoPago]);
 
+  // =========================================================
+  // 3. RENDERIZADO VISUAL
+  // =========================================================
   const fmtM = (num: number) => (num / 1000000).toFixed(1) + 'Mllns';
   const fmtK = (num: number) => (num / 1000).toFixed(0) + 'K';
   const fmtComas = (num: number) => Math.round(num).toLocaleString('en-US');
@@ -83,6 +106,9 @@ export default function Reportes({ datosComerciales = [] }: ReportesProps) {
       
       {/* --- RENDER: MODELO 1 MACRO --- */}
       <div className="max-w-xl bg-white shadow-sm border border-slate-300">
+        <div className="p-3 bg-slate-100 border-b border-slate-300 font-bold text-slate-800 text-sm">
+          Resumen Oficial (Dinero real cruzado por Catálogo)
+        </div>
         <table className="w-full text-center text-sm border-collapse">
           <thead>
             <tr className="bg-[#b90000] text-white font-bold text-base">
@@ -93,7 +119,7 @@ export default function Reportes({ datosComerciales = [] }: ReportesProps) {
             </tr>
           </thead>
           <tbody>
-            {reporteMacro.map((row, idx) => (
+            {datosProcesados.macro.map((row, idx) => (
               <tr key={row.ano} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
                 <td className="py-2 px-4 border border-slate-300 font-bold text-lg">{row.ano}</td>
                 <td className="py-2 px-4 border border-slate-300 text-lg">{fmtM(row.facturacion)}</td>
@@ -110,7 +136,7 @@ export default function Reportes({ datosComerciales = [] }: ReportesProps) {
       {/* --- RENDER: MODELO 2 MATRIZ COBRANZA --- */}
       <div className="bg-white shadow-sm border border-slate-300 overflow-x-auto">
         <div className="p-4 bg-slate-100 border-b border-slate-300 flex items-center gap-4">
-          <label className="text-sm font-semibold text-slate-700">Año de pago:</label>
+          <label className="text-sm font-semibold text-slate-700">Año Contable:</label>
           <select 
             value={filtroAnoPago} 
             onChange={(e) => setFiltroAnoPago(Number(e.target.value))}
@@ -119,13 +145,13 @@ export default function Reportes({ datosComerciales = [] }: ReportesProps) {
             <option value={2025}>2025</option>
             <option value={2026}>2026</option>
           </select>
-          <span className="text-sm font-semibold ml-4 text-slate-700">Proceso: <span className="font-bold">Cobranza</span></span>
+          <span className="text-sm font-semibold ml-4 text-slate-700">Valores de: <span className="font-bold">Facturas Reales</span></span>
         </div>
 
         <table className="w-full text-right text-xs border-collapse">
           <thead>
             <tr className="bg-[#b90000] text-white font-bold">
-              <th className="py-2 px-3 border border-slate-400 text-left">Rubro</th>
+              <th className="py-2 px-3 border border-slate-400 text-left">Rubro Comercial</th>
               {MESES.slice(0, 6).map(mes => (
                 <th key={mes} className="py-2 px-3 border border-slate-400">{mes}</th>
               ))}
@@ -133,7 +159,7 @@ export default function Reportes({ datosComerciales = [] }: ReportesProps) {
             </tr>
           </thead>
           <tbody>
-            {Object.entries(matrizCobranza.matriz)
+            {Object.entries(datosProcesados.matriz)
               .sort(([rubroA], [rubroB]) => rubroA.localeCompare(rubroB))
               .map(([rubro, valores]) => (
                 <tr key={rubro} className="hover:bg-slate-50 transition-colors">
@@ -149,16 +175,16 @@ export default function Reportes({ datosComerciales = [] }: ReportesProps) {
                 </tr>
             ))}
             
-            {/* TOTALES GENERALES (Pie de tabla) */}
+            {/* TOTALES GENERALES */}
             <tr className="bg-[#b90000] text-white font-bold text-sm">
               <td className="py-2 px-3 border border-slate-400 text-left">Total general</td>
               {MESES.slice(0, 6).map(mes => (
                 <td key={mes} className="py-2 px-3 border border-slate-400">
-                  {matrizCobranza.totalesMes[mes] ? fmtComas(matrizCobranza.totalesMes[mes]) : ''}
+                  {datosProcesados.totalesMes[mes] ? fmtComas(datosProcesados.totalesMes[mes]) : ''}
                 </td>
               ))}
               <td className="py-2 px-3 border border-slate-400">
-                {fmtComas(matrizCobranza.granTotal)}
+                {fmtComas(datosProcesados.granTotalMatriz)}
               </td>
             </tr>
           </tbody>
