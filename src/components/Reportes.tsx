@@ -1,321 +1,168 @@
-import React, { useMemo } from 'react';
-import { Factura, Abono } from '../types';
-import { diasHasta, requiereDetraccionPEN, fmtMonto } from '../lib/businessUtils';
-import { 
-  AlertTriangle, 
-  TrendingUp, 
-  CheckCircle, 
-  Users, 
-  HelpCircle, 
-  Wallet,
-  Activity,
-  Award
-} from 'lucide-react';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Legend, 
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell
-} from 'recharts';
+import React, { useMemo, useState } from 'react';
 
-interface ReportesProps {
-  facturas: Factura[];
-  abonos: Abono[];
+interface FilaComercial {
+  proceso: string;
+  gg: string;
+  rubro: string;
+  ano_emision: number;
+  ano_pago: number;
+  mes_pago: string;
+  compromiso_s: number;
+  amortizacion_s: number;
+  saldo_s: number;
+  importe_bruto: number;
 }
 
-export default function Reportes({ facturas, abonos }: ReportesProps) {
+interface ReportesProps {
+  facturas: any[];
+  abonos: any[];
+  datosComerciales?: FilaComercial[];
+}
+
+const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+export default function Reportes({ datosComerciales = [] }: ReportesProps) {
+  const [filtroAnoPago, setFiltroAnoPago] = useState<number>(2026);
   
-  // 1. LÓGICA: ALERTA PREVENTIVA (3+ FACTURAS VENCIDAS)
-  const asociadosEnRiesgo = useMemo(() => {
-    const deudasPorCliente: { [key: string]: { cantidad: number; totalSaldoPEN: number; totalSaldoUSD: number; ruc: string } } = {};
+  // =========================================================
+  // MODELO 1: RESUMEN MACRO (Facturación vs Cobranza vs CxC)
+  // =========================================================
+  const reporteMacro = useMemo(() => {
+    const agrupado: { [ano: number]: { facturacion: number, cobranza: number, cxc: number } } = {};
     
-    facturas.forEach(f => {
-      const dias = diasHasta(f.fecha_ven);
-      if (f.saldo > 0.01 && dias !== null && dias < 0) {
-        if (!deudasPorCliente[f.razon_social]) {
-          deudasPorCliente[f.razon_social] = { cantidad: 0, totalSaldoPEN: 0, totalSaldoUSD: 0, ruc: f.ruc || '' };
-        }
-        deudasPorCliente[f.razon_social].cantidad++;
-        if (f.moneda === 'USD') {
-          deudasPorCliente[f.razon_social].totalSaldoUSD += f.saldo;
-        } else {
-          deudasPorCliente[f.razon_social].totalSaldoPEN += f.saldo;
-        }
-      }
+    datosComerciales.forEach(row => {
+      const ano = row.ano_emision;
+      if (!ano) return;
+      if (!agrupado[ano]) agrupado[ano] = { facturacion: 0, cobranza: 0, cxc: 0 };
+      
+      agrupado[ano].facturacion += (row.compromiso_s || 0);
+      agrupado[ano].cobranza += Math.abs(row.amortizacion_s || 0);
+      agrupado[ano].cxc += (row.saldo_s || 0);
     });
 
-    return Object.keys(deudasPorCliente)
-      .map(key => ({ razon_social: key, ...deudasPorCliente[key] }))
-      .filter(a => a.cantidad >= 3)
-      .sort((a, b) => b.cantidad - a.cantidad);
-  }, [facturas]);
+    return Object.entries(agrupado)
+      .sort(([a], [b]) => Number(b) - Number(a))
+      .map(([ano, totales]) => ({ ano, ...totales }));
+  }, [datosComerciales]);
 
-  // 1b. ALERTA: facturas F201/F301 >S/700 registradas en USD
-  const inconsistentesDetraccion = useMemo(() => {
-    return facturas.filter(f => f.saldo > 0.01 && f.moneda === 'USD' && requiereDetraccionPEN(f));
-  }, [facturas]);
+  // =========================================================
+  // MODELO 2: MATRIZ DE COBRANZA POR RUBRO
+  // =========================================================
+  const matrizCobranza = useMemo(() => {
+    const dataFiltrada = datosComerciales.filter(r => 
+      r.proceso === 'Cobranza' && r.ano_pago === filtroAnoPago
+    );
 
-  // 2. LÓGICA: REPORTE DE INGRESOS POR RUBRO (SEGÚN GLOSA BANCARIA)
-  const rubrosData = useMemo(() => {
-    const rubros = {
-      'Cuotas Institucionales / Membresías': { PEN: 0, USD: 0 },
-      'Certificaciones y Constancias': { PEN: 0, USD: 0 },
-      'Capacitaciones, Cursos y Eventos': { PEN: 0, USD: 0 },
-      'Otros Ingresos por Identificar': { PEN: 0, USD: 0 }
-    };
+    const matriz: { [rubro: string]: { [mes: string]: number, total: number } } = {};
+    const totalesMes: { [mes: string]: number } = {};
+    let granTotal = 0;
 
-    let totalPEN = 0;
-    let totalUSD = 0;
+    dataFiltrada.forEach(row => {
+      const rubro = row.rubro || 'Sin Rubro';
+      const mes = row.mes_pago;
+      const monto = Math.abs(row.importe_bruto || 0);
 
-    abonos.forEach(p => {
-      if (p.estado === 'confirmado' && p.monto > 0) {
-        const glosa = (p.descripcion || '').toUpperCase();
-        const mon = p.moneda === 'USD' ? 'USD' : 'PEN';
-        const monto = parseFloat(String(p.monto));
-        
-        if (mon === 'USD') totalUSD += monto;
-        else totalPEN += monto;
-
-        let key: keyof typeof rubros;
-        if (glosa.includes('CUOTA') || glosa.includes('MEMBRE') || glosa.includes('APORTE') || glosa.includes('ASOC')) {
-          key = 'Cuotas Institucionales / Membresías';
-        } else if (glosa.includes('CERTIF') || glosa.includes('CONSTANC') || glosa.includes('DERECHO') || glosa.includes('TASA')) {
-          key = 'Certificaciones y Constancias';
-        } else if (glosa.includes('CURSO') || glosa.includes('CAPACIT') || glosa.includes('SEMINARIO') || glosa.includes('FORO') || glosa.includes('CONGRE')) {
-          key = 'Capacitaciones, Cursos y Eventos';
-        } else {
-          key = 'Otros Ingresos por Identificar';
-        }
-        rubros[key][mon] += monto;
-      }
+      if (!matriz[rubro]) matriz[rubro] = { total: 0 };
+      
+      matriz[rubro][mes] = (matriz[rubro][mes] || 0) + monto;
+      matriz[rubro].total += monto;
+      
+      totalesMes[mes] = (totalesMes[mes] || 0) + monto;
+      granTotal += monto;
     });
 
-    // Formatting for charts
-    const chartPEN = Object.keys(rubros).map(key => {
-      const name = key;
-      const val = rubros[key as keyof typeof rubros].PEN;
-      const pct = totalPEN > 0 ? Math.round((val / totalPEN) * 100) : 0;
-      return { name, value: val, percentage: pct };
-    });
+    return { matriz, totalesMes, granTotal };
+  }, [datosComerciales, filtroAnoPago]);
 
-    const chartUSD = Object.keys(rubros).map(key => {
-      const name = key;
-      const val = rubros[key as keyof typeof rubros].USD;
-      const pct = totalUSD > 0 ? Math.round((val / totalUSD) * 100) : 0;
-      return { name, value: val, percentage: pct };
-    });
-
-    return {
-      rubrosRaw: rubros,
-      totalPEN,
-      totalUSD,
-      chartPEN,
-      chartUSD
-    };
-  }, [abonos]);
-
-  const COLORS = ['#004b93', '#10b981', '#f59e0b', '#64748b'];
+  const fmtM = (num: number) => (num / 1000000).toFixed(1) + 'Mllns';
+  const fmtK = (num: number) => (num / 1000).toFixed(0) + 'K';
+  const fmtComas = (num: number) => Math.round(num).toLocaleString('en-US');
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 font-sans">
       
-      {/* Risk Alert & Income Rows */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        
-        {/* Alerta Preventiva de Suspensión (3+ Facturas Vencidas) */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm border-t-4 border-t-red-500">
-          <div className="flex items-start gap-3 mb-4">
-            <div className="p-2 bg-red-50 text-red-500 rounded-xl">
-              <AlertTriangle className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Alerta Preventiva de Suspensión</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Empresas asociadas con 3 o más facturas/cuotas vencidas actualmente.
-              </p>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto border border-slate-100 rounded-xl">
-            {asociadosEnRiesgo.length === 0 ? (
-              <div className="p-10 text-center text-slate-400">
-                <CheckCircle className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-                <div className="text-xs font-semibold text-slate-700">Sin asociados en riesgo</div>
-                <p className="text-[11px] text-slate-400 mt-0.5">Todos los asociados se encuentran al día o con deudas mínimas.</p>
-              </div>
-            ) : (
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-150">
-                    <th className="px-4 py-2.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono">Asociado</th>
-                    <th className="px-4 py-2.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono text-center">Docs Vencidos</th>
-                    <th className="px-4 py-2.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono text-right">Total Pendiente</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {asociadosEnRiesgo.map((a, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-4 py-3 max-w-[180px] truncate">
-                        <div className="font-semibold text-slate-900 leading-tight truncate">{a.razon_social}</div>
-                        <div className="text-[9px] text-slate-400 font-mono mt-0.5">RUC: {a.ruc}</div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-600 border border-red-100">
-                          {a.cantidad} cuotas
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono font-bold text-red-600">
-                        {a.totalSaldoPEN > 0 && fmtMonto(a.totalSaldoPEN, 'PEN')}
-                        {a.totalSaldoUSD > 0 && (
-                          <>
-                            {a.totalSaldoPEN > 0 && <br />}
-                            {fmtMonto(a.totalSaldoUSD, 'USD')}
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
-        {/* Recaudación de Ingresos por Rubro */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm border-t-4 border-t-emerald-500">
-          <div className="flex items-start gap-3 mb-4">
-            <div className="p-2 bg-emerald-50 text-emerald-500 rounded-xl">
-              <TrendingUp className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Recaudación de Ingresos por Rubro</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Análisis de los abonos conciliados de acuerdo a la glosa bancaria.
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {/* Chart Container Soles */}
-            {rubrosData.totalPEN > 0 && (
-              <div className="space-y-2">
-                <div className="text-xs font-semibold text-slate-700 font-mono flex justify-between">
-                  <span>Soles (S/.)</span>
-                  <span className="text-emerald-600">{fmtMonto(rubrosData.totalPEN, 'PEN')}</span>
-                </div>
-                <div className="h-[180px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={rubrosData.chartPEN}
-                      margin={{ top: 5, right: 10, left: -20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 8 }} interval={0} stroke="#94a3b8" />
-                      <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
-                      <Tooltip 
-                        contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }}
-                        formatter={(value) => [`S/. ${Number(value).toLocaleString('es-PE', { minimumFractionDigits: 2 })}`, 'Recaudado']}
-                      />
-                      <Bar dataKey="value" fill="#004b93" radius={[4, 4, 0, 0]}>
-                        {rubrosData.chartPEN.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
-
-            {/* Chart Container USD */}
-            {rubrosData.totalUSD > 0 && (
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <div className="text-xs font-semibold text-slate-700 font-mono flex justify-between">
-                  <span>Dólares (US$)</span>
-                  <span className="text-emerald-600">{fmtMonto(rubrosData.totalUSD, 'USD')}</span>
-                </div>
-                <div className="h-[180px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={rubrosData.chartUSD}
-                      margin={{ top: 5, right: 10, left: -20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="name" tick={{ fontSize: 8 }} interval={0} stroke="#94a3b8" />
-                      <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
-                      <Tooltip 
-                        contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }}
-                        formatter={(value) => [`US$ ${Number(value).toLocaleString('es-PE', { minimumFractionDigits: 2 })}`, 'Recaudado']}
-                      />
-                      <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]}>
-                        {rubrosData.chartUSD.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
-
-            {rubrosData.totalPEN === 0 && rubrosData.totalUSD === 0 && (
-              <div className="p-10 text-center text-slate-400">
-                <Wallet className="w-8 h-8 text-slate-200 mx-auto mb-2" />
-                <div className="text-xs font-semibold text-slate-700">Sin recaudaciones registradas</div>
-                <p className="text-[11px] text-slate-400 mt-0.5">Inicia conciliaciones confirmadas de abonos para nutrir este reporte en tiempo real.</p>
-              </div>
-            )}
-          </div>
-        </div>
+      {/* --- RENDER: MODELO 1 MACRO --- */}
+      <div className="max-w-xl bg-white shadow-sm border border-slate-300">
+        <table className="w-full text-center text-sm border-collapse">
+          <thead>
+            <tr className="bg-[#b90000] text-white font-bold text-base">
+              <th className="py-2 px-4 border border-slate-400">Año de Emision</th>
+              <th className="py-2 px-4 border border-slate-400">Facturacion</th>
+              <th className="py-2 px-4 border border-slate-400">Cobranza</th>
+              <th className="py-2 px-4 border border-slate-400 bg-[#990000]">CxC</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reporteMacro.map((row, idx) => (
+              <tr key={row.ano} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                <td className="py-2 px-4 border border-slate-300 font-bold text-lg">{row.ano}</td>
+                <td className="py-2 px-4 border border-slate-300 text-lg">{fmtM(row.facturacion)}</td>
+                <td className="py-2 px-4 border border-slate-300 text-lg">{fmtM(row.cobranza)}</td>
+                <td className="py-2 px-4 border border-slate-300 font-bold text-lg">{fmtK(row.cxc)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      {/* Inconsistent Currency Warnings */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm border-t-4 border-t-amber-500">
-        <div className="flex items-start gap-3 mb-4">
-          <div className="p-2 bg-amber-50 text-amber-500 rounded-xl">
-            <AlertTriangle className="w-5 h-5 animate-bounce-slow" />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">⚠️ Inconsistencias de Detracciones F201/F301</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Facturas de serie F201/F301 registradas con moneda Dólares (USD) superando el umbral. El Banco de la Nación de Perú no permite registrar o cancelar detracciones en dólares.
-            </p>
-          </div>
+      <hr className="border-slate-300" />
+
+      {/* --- RENDER: MODELO 2 MATRIZ COBRANZA --- */}
+      <div className="bg-white shadow-sm border border-slate-300 overflow-x-auto">
+        <div className="p-4 bg-slate-100 border-b border-slate-300 flex items-center gap-4">
+          <label className="text-sm font-semibold text-slate-700">Año de pago:</label>
+          <select 
+            value={filtroAnoPago} 
+            onChange={(e) => setFiltroAnoPago(Number(e.target.value))}
+            className="border border-slate-300 rounded p-1 text-sm bg-white"
+          >
+            <option value={2025}>2025</option>
+            <option value={2026}>2026</option>
+          </select>
+          <span className="text-sm font-semibold ml-4 text-slate-700">Proceso: <span className="font-bold">Cobranza</span></span>
         </div>
 
-        <div className="overflow-x-auto border border-slate-100 rounded-xl">
-          {inconsistentesDetraccion.length === 0 ? (
-            <div className="p-6 text-center text-slate-400 text-xs">
-              💚 No se encontraron facturas con inconsistencias de detracción SUNAT.
-            </div>
-          ) : (
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-150">
-                  <th className="px-4 py-2.5 font-semibold text-slate-500">Factura</th>
-                  <th className="px-4 py-2.5 font-semibold text-slate-500">Empresa / Asociado</th>
-                  <th className="px-4 py-2.5 font-semibold text-slate-500 text-right">Saldo (USD)</th>
+        <table className="w-full text-right text-xs border-collapse">
+          <thead>
+            <tr className="bg-[#b90000] text-white font-bold">
+              <th className="py-2 px-3 border border-slate-400 text-left">Rubro</th>
+              {MESES.slice(0, 6).map(mes => (
+                <th key={mes} className="py-2 px-3 border border-slate-400">{mes}</th>
+              ))}
+              <th className="py-2 px-3 border border-slate-400">Total general</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(matrizCobranza.matriz)
+              .sort(([rubroA], [rubroB]) => rubroA.localeCompare(rubroB))
+              .map(([rubro, valores]) => (
+                <tr key={rubro} className="hover:bg-slate-50 transition-colors">
+                  <td className="py-1.5 px-3 border border-slate-300 text-left font-semibold text-slate-800">{rubro}</td>
+                  {MESES.slice(0, 6).map(mes => (
+                    <td key={mes} className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      {valores[mes] ? fmtComas(valores[mes]) : ''}
+                    </td>
+                  ))}
+                  <td className="py-1.5 px-3 border border-slate-300 font-bold bg-slate-50 text-slate-900">
+                    {fmtComas(valores.total)}
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {inconsistentesDetraccion.map((f, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-4 py-2.5 font-mono font-bold text-amber-700">{f.factura}</td>
-                    <td className="px-4 py-2.5 truncate max-w-[250px]">{f.razon_social}</td>
-                    <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{fmtMonto(f.saldo, 'USD')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+            ))}
+            
+            {/* TOTALES GENERALES (Pie de tabla) */}
+            <tr className="bg-[#b90000] text-white font-bold text-sm">
+              <td className="py-2 px-3 border border-slate-400 text-left">Total general</td>
+              {MESES.slice(0, 6).map(mes => (
+                <td key={mes} className="py-2 px-3 border border-slate-400">
+                  {matrizCobranza.totalesMes[mes] ? fmtComas(matrizCobranza.totalesMes[mes]) : ''}
+                </td>
+              ))}
+              <td className="py-2 px-3 border border-slate-400">
+                {fmtComas(matrizCobranza.granTotal)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   );
