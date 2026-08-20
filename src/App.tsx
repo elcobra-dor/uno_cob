@@ -15,8 +15,7 @@ import {
   fmtFecha, 
   fmtMonto, 
   requiereDetraccionPEN, 
-  esAbonoDetraccionBN,
-  procesarEnLotes
+  esAbonoDetraccionBN 
 } from './lib/businessUtils';
 import * as XLSX from 'xlsx';
 import { 
@@ -39,10 +38,10 @@ const TABLA_CUENTAS: { [key: string]: { cta_contable: string; mon: 'S' | 'D' } }
   '304': { cta_contable: '104115', mon: 'S' },
   '131': { cta_contable: '104125', mon: 'D' },
   '579': { cta_contable: '104117', mon: 'S' },
-  '679': { cta_contable: '104117', mon: 'S' }, // <-- Interbank Nuevo
+  '679': { cta_contable: '104117', mon: 'S' },
   '285': { cta_contable: '104114', mon: 'S' },
   '444': { cta_contable: '104111', mon: 'S' },
-  '897': { cta_contable: '104111', mon: 'S' }  // <-- Banco de la Nación Nuevo
+  '897': { cta_contable: '104111', mon: 'S' }
 };
 
 export default function App() {
@@ -60,12 +59,16 @@ export default function App() {
   const [abonos, setAbonos] = useState<Abono[]>([]);
   const [egresos, setEgresos] = useState<Egreso[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
-  const [catalogoComercial, setCatalogoComercial] = useState<any[]>([]); // <--- NUEVO ESTADO AGREGADO
-  const [facturasComercial, setFacturasComercial] = useState<any[]>([]); // <--- NUEVO ESTADO
   const [interMap, setInterMap] = useState<{ [key: string]: string }>({});
   const [bdMap, setBdMap] = useState<{ [key: string]: any }>({});
+  const [datosComerciales, setDatosComerciales] = useState<any[]>([]);
+  const [catalogoComercial, setCatalogoComercial] = useState<any[]>([]);
 
-  // Helper trigger to show toasts
+  const facturasPorNumero = useMemo(
+    () => new Map(facturas.map(f => [f.factura, f])),
+    [facturas]
+  );
+
   const showToast = useCallback((text: string, type: 'green' | 'amber' | '' = '') => {
     setToast({ text, type });
     setTimeout(() => {
@@ -109,40 +112,22 @@ export default function App() {
     };
   }, []);
 
-  // 2. Load Core Data from Supabase
+  // 2. Load Core Data from Supabase con fetchAllRows para evitar el límite de 1000
   const cargarDesdeBD = useCallback(async () => {
     if (!userAuthenticated) return;
     setLoadingData(true);
     setDbStatus('connecting');
-    const __t0 = performance.now(); // TEMP TIMING
 
     try {
-      const [fdata, bdata, cdata, edata, catData, catComercialData, factComercialData] = await Promise.all([
-        fetchAllRows<any>((from, to) =>
-          supabase.from('facturas').select('*').order('fecha_doc').range(from, to)
-        ),
-        fetchAllRows<any>((from, to) =>
-          supabase.from('abonos').select('*').order('fecha').range(from, to)
-        ),
-        fetchAllRows<any>((from, to) =>
-          supabase.from('conciliaciones').select('*').range(from, to)
-        ),
-        fetchAllRows<any>((from, to) =>
-          supabase.from('egresos').select('*').order('fecha').range(from, to)
-        ),
-        fetchAllRows<any>((from, to) =>
-          supabase.from('categorias').select('*').eq('activo', true).order('orden').range(from, to)
-        ),
-        fetchAllRows<any>((from, to) =>
-          supabase.from('catalogo_comercial').select('*').range(from, to) // <--- NUEVA CONSULTA
-        ),
-        // <--- NUEVA CONSULTA ABAJO --->
-        fetchAllRows<any>((from, to) =>
-          supabase.from('facturas_comercial').select('*').range(from, to)
-        ),
+      const [fdata, bdata, cdata, edata, catData, comData, catalogoData] = await Promise.all([
+        fetchAllRows<any>((from, to) => supabase.from('facturas').select('*').order('fecha_doc').range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from('abonos').select('*').order('fecha').range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from('conciliaciones').select('*').range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from('egresos').select('*').order('fecha').range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from('categorias').select('*').eq('activo', true).order('orden').range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from('facturas_comercial').select('*').range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from('catalogo_comercial').select('*').range(from, to))
       ]);
-      console.log('TIMING fetch Supabase (ms):', Math.round(performance.now() - __t0)); // TEMP TIMING
-      const __t1 = performance.now(); // TEMP TIMING
 
       const facturasCargadas = (fdata || []).map((f: any) => ({
         ...f,
@@ -152,7 +137,6 @@ export default function App() {
 
       const abonosCargados = bdata || [];
 
-      // Map match records
       const concMap: { [key: string]: { factura: string; razon: string; importe_factura: number }[] } = {};
       (cdata || []).forEach((c: any) => {
         if (!concMap[c.operacion]) concMap[c.operacion] = [];
@@ -163,7 +147,6 @@ export default function App() {
         });
       });
 
-      // Assemble initial list of abonos
       const initialAbonos: Abono[] = abonosCargados.map((b: any, idx: number) => {
         const concItems = concMap[b.operacion];
         return {
@@ -177,16 +160,15 @@ export default function App() {
         };
       });
 
-      // Dynamic Balance Reductions Purely calculated in local memory state (avoid mutating)
       const facturasConSaldos = facturasCargadas.map(f => ({ ...f }));
-      
-      // First, reduce mathematically all confirmed ones to keep exact balance
+      const facturasPorNumeroLocal = new Map(facturasConSaldos.map(f => [f.factura, f]));
+
       initialAbonos.forEach(p => {
         if (p.estado === 'confirmado' && p.facturas) {
           let disponible = p.monto;
           p.facturas.forEach(linea => {
             if (!linea.factura) return;
-            const f = facturasConSaldos.find(x => x.factura === linea.factura);
+            const f = facturasPorNumeroLocal.get(linea.factura);
             if (f && disponible > 0) {
               const cobro = Math.min(disponible, f.saldo);
               f.saldo -= cobro;
@@ -196,12 +178,11 @@ export default function App() {
         }
       });
 
-      // Round decimals cleanly
       facturasConSaldos.forEach(f => {
         f.saldo = Math.round(f.saldo * 100) / 100;
       });
 
-      await procesarEnLotes(initialAbonos, (p) => {
+      initialAbonos.forEach(p => {
         if (p.estado === 'pendiente') {
           const sug = sugerirFactura(p, facturasConSaldos);
           if (sug) {
@@ -218,18 +199,14 @@ export default function App() {
         monto: parseFloat(e.monto) || 0,
       }));
 
-      console.log('TIMING calculo sugerencias (ms):', Math.round(performance.now() - __t1)); // TEMP TIMING
-      const __t2 = performance.now(); // TEMP TIMING
-
       setFacturas(facturasConSaldos);
       setAbonos(initialAbonos);
       setEgresos(egresosCargados);
       setCategorias(catData || []);
-      setCatalogoComercial(catComercialData || []); // <--- NUEVA ASIGNACIÓN
-      setFacturasComercial(factComercialData || []); // <--- AÑADIR ESTA LÍNEA
+      setDatosComerciales(comData || []);
+      setCatalogoComercial(catalogoData || []);
       setDbStatus('connected');
       showToast('Datos sincronizados correctamente', 'green');
-      setTimeout(() => console.log('TIMING hasta despues de setState + 1 tick (ms):', Math.round(performance.now() - __t2)), 0); // TEMP TIMING
     } catch (err: any) {
       console.error(err);
       setDbStatus('error');
@@ -239,14 +216,12 @@ export default function App() {
     }
   }, [userAuthenticated, showToast]);
 
-  // Load everything on auth success
   useEffect(() => {
     if (userAuthenticated) {
       cargarDesdeBD();
     }
   }, [userAuthenticated, cargarDesdeBD]);
 
-  // 3. Reconciliation Actions
   const handleConfirmar = async (id: number) => {
     const p = abonos.find(x => x.id === id);
     if (!p || !p.facturas.some(f => f.factura)) return;
@@ -256,7 +231,7 @@ export default function App() {
       const rows = p.facturas
         .filter(f => f.factura)
         .map(f => {
-          const originalFac = facturas.find(x => x.factura === f.factura);
+          const originalFac = facturasPorNumero.get(f.factura);
           const saldoFactura = originalFac?.saldo ?? originalFac?.saldo_original ?? disponible;
           const cobro = Math.round(Math.min(disponible, saldoFactura) * 100) / 100;
           disponible = Math.round((disponible - cobro) * 100) / 100;
@@ -412,7 +387,7 @@ export default function App() {
     setAbonos(prev => prev.map(p => {
       if (p.id === id) {
         const lineas = [...p.facturas];
-        const f = facturas.find(x => x.factura === val);
+        const f = facturasPorNumero.get(val);
         lineas[idx] = { factura: val, razon: f ? f.razon_social : '' };
         return {
           ...p,
@@ -436,7 +411,6 @@ export default function App() {
     }));
   };
 
-  // 4. Egresos Actions
   const handleCambiarCategoriaEgreso = (id: string, catId: string) => {
     const cat = categorias.find(c => c.id === catId);
     setEgresos(prev => prev.map(e => {
@@ -452,44 +426,16 @@ export default function App() {
   };
 
   const handleConfirmarEgreso = async (id: string) => {
-    // -------------------------------------------------------------
-    // BLOQUE MODIFICADO: LÓGICA INTELIGENTE DE SUGERENCIAS
-    // -------------------------------------------------------------
-    const e: any = egresos.find(x => x.id === id);
-    if (!e) return;
-
-    let catIdFinal = e.categoria_id;
-    let catNombreFinal = e.categoria_nombre;
-
-    // Si no se hizo clic manualmente (catIdFinal vacío), intentamos rescatar la sugerencia
-    if (!catIdFinal) {
-      const textoSugerencia = e.categoria_sugerida || e.sugerencia || '';
-      
-      // Buscamos si la sugerencia en texto coincide con alguna categoría real
-      const matchCat = categorias.find(c => 
-        c.id === e.categoria_sugerida_id || 
-        (textoSugerencia && c.grupo?.toLowerCase() === String(textoSugerencia).toLowerCase())
-      );
-
-      if (matchCat) {
-        catIdFinal = matchCat.id;
-        catNombreFinal = `${matchCat.grupo}${matchCat.subgrupo ? ` / ${matchCat.subgrupo}` : ''}`;
-      } else if (e.categoria_sugerida_id) {
-        // En caso de que sí traiga un ID sugerido directo de la BD
-        catIdFinal = e.categoria_sugerida_id;
-        catNombreFinal = e.categoria_sugerida_nombre || textoSugerencia;
-      }
-    }
-
-    if (!catIdFinal) {
+    const e = egresos.find(x => x.id === id);
+    if (!e || !e.categoria_id) {
       alert('Por favor selecciona una categoría presupuestaria antes de confirmar.');
       return;
     }
 
     try {
       const { error } = await supabase.from('egresos').update({
-        categoria_id: catIdFinal,
-        categoria_nombre: catNombreFinal,
+        categoria_id: e.categoria_id,
+        categoria_nombre: e.categoria_nombre,
         estado: 'confirmado'
       }).eq('id', id);
 
@@ -514,7 +460,6 @@ export default function App() {
     }
   };
 
-  // 5. Categorías Presupuestarias Actions
   const handleGuardarCategoria = async (id: string, data: { grupo: string; subgrupo: string; palabras_clave: string }) => {
     const payload = {
       grupo: data.grupo,
@@ -550,7 +495,6 @@ export default function App() {
     }
   };
 
-  // Helper reader of Excel rows
   const parseExcel = (file: File): Promise<any[]> => {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
@@ -570,7 +514,6 @@ export default function App() {
     });
   };
 
-  // 6. Excel Upload Processing (Semáforo Inteligente)
   const handleCargarFacturas = async (file: File) => {
     const rows = await parseExcel(file);
     if (!rows.length) {
@@ -579,60 +522,25 @@ export default function App() {
     }
 
     const headers = Object.keys(rows[0]);
-    // Detectores de tipo de archivo
     const esContable = headers.includes('SALDO_S') && headers.includes('SERIE') && headers.includes('NUMERO');
-    const esBaseComercial = headers.includes('SERIE_DOC') && headers.includes('NUMERO_DOC') && headers.includes('COD_PROD');
-    const esCatalogo = headers.includes('Producto') && headers.includes('Rubro') && headers.includes('GG');
+    const esComercial = headers.includes('SERIE_DOC') && headers.includes('NUMERO_DOC');
+    const esCatalogo = headers.includes('Producto') && headers.includes('Rubro');
 
     const limpiarDocNum = (serie: any, numero: any) => {
       const s = String(serie || '').trim().replace(/^0+/, '');
-      const n = String(numero || '').trim().replace(/^0+/, '').padStart(8, '0');
-      if (!s && n === '00000000') return null;
-      if (!s) return n;
-      return `${s}-${n}`;
+      const n = String(numero || '').trim().replace(/^0+/, '');
+      return s && n ? `${s}-${n}` : null;
     };
-    
+
     const atraparGlosa = (r: any) => {
       return String(r['GLOSA'] || r['Glosa'] || r['glosa'] || r['DESCRIPCION'] || r['Descripcion'] || '').trim();
     };
 
-    let procesado = false;
     let nuevas: any[] = [];
     let nuevasComercial: any[] = [];
 
-    // FLUJO 1: PROCESAMIENTO DE SALDOS CONTABLES
-    if (esContable) {
-      const resumenContable: { [key: string]: any } = {};
-      rows.forEach(r => {
-        const codFactura = limpiarDocNum(r['SERIE'], r['NUMERO']);
-        if (!codFactura) return;
-        const monedaDoc = String(r['M_REG'] || 'S').trim().toUpperCase();
-        const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
-        const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
-
-        if (!resumenContable[codFactura] || saldoFila < resumenContable[codFactura].saldo) {
-          resumenContable[codFactura] = {
-            factura: codFactura, razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-            fecha_doc: fmtFecha(r['FECHA_DOC']), fecha_ven: fmtFecha(r['FECHA_VEN']),
-            saldo: saldoFila, mes: parseInt(r['MES']) || 0, moneda: esDolares ? 'USD' : 'PEN',
-            glosa: atraparGlosa(r), tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || 0),
-            ruc: String(r['RUC'] || '').trim(), cuenta_contable: String(r['CUENTA'] || '').trim()
-          };
-        }
-      });
-      nuevas = Object.values(resumenContable).filter(f => f.saldo > 0);
-
-      const { error } = await supabase.from('facturas').upsert(nuevas, { onConflict: 'factura' });
-      if (error) throw error;
-      showToast(`Procesadas ${nuevas.length} facturas contables con éxito.`, 'green');
-      procesado = true;
-    }
-
-    // FLUJO 2: PROCESAMIENTO DEL CATÁLOGO COMERCIAL
     if (esCatalogo) {
-      // 1. Usamos un objeto para filtrar duplicados automáticamente
       const catalogoUnico: { [key: string]: any } = {};
-      
       rows.forEach(r => {
         const prod = String(r['Producto'] || '').trim();
         if (prod) {
@@ -644,83 +552,96 @@ export default function App() {
           };
         }
       });
-
-      // 2. Convertimos el objeto limpio de vuelta a un arreglo
       const nuevosCat = Object.values(catalogoUnico);
-
-      // 3. Enviamos a Supabase sin miedo a duplicados
       const { error } = await supabase.from('catalogo_comercial').upsert(nuevosCat, { onConflict: 'producto' });
       if (error) throw error;
-      
-      showToast(`Catálogo Comercial (${nuevosCat.length} únicos) actualizado correctamente.`, 'green');
-      await cargarDesdeBD(); // Recarga estado local inmediatamente
-      procesado = true;
-    }
+      showToast(`Catálogo Comercial (${nuevosCat.length} registros) actualizado ✓`, 'green');
+      await cargarDesdeBD();
 
-    // FLUJO 3: PROCESAMIENTO BASE COMERCIAL (Reportes con Cruce VLOOKUP)
-    if (esBaseComercial) {
-      const mesesDict: { [key: string]: string } = {
-        '01': 'Enero', '02': 'Febrero', '03': 'Marzo', '04': 'Abril',
-        '05': 'Mayo', '06': 'Junio', '07': 'Julio', '08': 'Agosto',
-        '09': 'Septiembre', '10': 'Octubre', '11': 'Noviembre', '12': 'Diciembre'
-      };
+    } else if (esContable) {
+      const resumenContable: { [key: string]: any } = {};
+      rows.forEach(r => {
+        const codFactura = limpiarDocNum(r['SERIE'], r['NUMERO']);
+        if (!codFactura) return;
+        const monedaDoc = String(r['M_REG'] || 'S').trim().toUpperCase();
+        const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
+        const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
 
+        if (!resumenContable[codFactura] || saldoFila < resumenContable[codFactura].saldo) {
+          resumenContable[codFactura] = {
+            factura: codFactura,
+            razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
+            fecha_doc: fmtFecha(r['FECHA_DOC']),
+            fecha_ven: fmtFecha(r['FECHA_VEN']),
+            saldo: saldoFila,
+            mes: parseInt(r['MES']) || 0,
+            moneda: esDolares ? 'USD' : 'PEN',
+            glosa: atraparGlosa(r),
+            tipo_cambio: parseFloat(r['TIPO_CAMBIO'] || 0),
+            ruc: String(r['RUC'] || '').trim(),
+            cuenta_contable: String(r['CUENTA'] || '').trim()
+          };
+        }
+      });
+      nuevas = Object.values(resumenContable).filter(f => f.saldo > 0);
+
+      const { error } = await supabase.from('facturas').upsert(nuevas, { onConflict: 'factura' });
+      if (error) throw error;
+      showToast(`Procesadas ${nuevas.length} facturas con éxito.`, 'green');
+
+    } else if (esComercial) {
       nuevasComercial = rows.map(r => {
         const codFactura = limpiarDocNum(r['SERIE_DOC'], r['NUMERO_DOC']);
-        const codProd = String(r['COD_PROD'] || '').trim();
-        const descProd = String(r['DESC_PROD'] || '').trim();
-        
-        // Simular un BUSCARV (VLOOKUP) en el catálogo en memoria
-        const llaveExacta = `${codProd} - ${descProd}`;
-        let infoCat = catalogoComercial.find(c => c.producto === llaveExacta);
-        
-        if (!infoCat) {
-          // Si no halla el exacto, busca por prefijo de la raíz (Ej: 01001007 coincide en 01001000)
-          infoCat = catalogoComercial.find(c => {
-             const catCod = c.producto.split('-')[0].trim();
-             return catCod && codProd.startsWith(catCod.slice(0, 5)); 
-          });
-        }
-        
-        const mesTxt = String(r['MES'] || '').trim();
-        const totalVenta = parseFloat(String(r['TOTAL'] || 0).replace(/,/g, ''));
-
         return {
-          factura: codFactura,
+          periodo: parseInt(r['PERIODO']) || null,
+          mes: parseInt(r['MES']) || null,
+          fecha_doc: fmtFecha(r['FECHA_DOC']),
           ruc: String(r['RUC'] || '').trim(),
           razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
-          fecha_doc: fmtFecha(r['FECHA_DOC']),
-          
-          proceso: 'Facturacion',
-          gg: infoCat ? infoCat.gg : 'Sin Clasificar',
-          rubro: infoCat ? infoCat.rubro : 'Sin Clasificar',
-          sector: String(r['DESC_C_COSTOS_2'] || '').trim(),
-          comite: String(r['DESC_ALMACEN'] || '').trim(),
-          
-          ano_emision: parseInt(r['PERIODO']) || 0,
-          ano_pago: parseInt(r['PERIODO']) || 0, 
-          mes_pago: mesesDict[mesTxt] || mesTxt,
-          
-          cod_prod: codProd,
-          desc_prod: descProd,
-          vendedor: String(r['VENDEDOR'] || '').trim(),
-          
-          compromiso_s: totalVenta,
-          importe_bruto: totalVenta,
-          venta_neta: parseFloat(String(r['NETO'] || 0).replace(/,/g, '')),
-          igv: parseFloat(String(r['IGV'] || 0).replace(/,/g, '')),
-          total_soles: totalVenta
+          cod_entidad: String(r['COD_ENTIDAD'] || '').trim(),
+          desc_entidad: String(r['DESC_ENTIDAD'] || '').trim(),
+          cod_almacen: String(r['COD_ALMACEN'] || '').trim(),
+          desc_almacen: String(r['DESC_ALMACEN'] || '').trim(),
+          c_costos: String(r['C_COSTOS'] || '').trim(),
+          desc_c_costos: String(r['DESC_C_COSTOS'] || '').trim(),
+          c_costos_2: String(r['C_COSTOS_2'] || '').trim(),
+          desc_c_costos_2: String(r['DESC_C_COSTOS_2'] || '').trim(),
+          cod_mov: String(r['COD_MOV'] || '').trim(),
+          desc_mov: String(r['DESC_MOV'] || '').trim(),
+          doc: String(r['DOC'] || '').trim(),
+          desc_doc: String(r['DESC_DOC'] || '').trim(),
+          serie_doc: String(r['SERIE_DOC'] || '').trim(),
+          numero_doc: String(r['NUMERO_DOC'] || '').trim(),
+          factura: codFactura,
+          cod_prod: String(r['COD_PROD'] || '').trim(),
+          desc_prod: String(r['DESC_PROD'] || '').trim(),
+          cod_lote: String(r['COD_LOTE'] || '').trim(),
+          fecha_venc_lote: fmtFecha(r['FECHA_VENC_LOTE']),
+          cod_laborat: String(r['COD_LABORAT'] || '').trim(),
+          cod_medida: String(r['COD_MEDIDA'] || '').trim(),
+          desc_medida: String(r['DESC_MEDIDA'] || '').trim(),
+          cod_familia: String(r['COD_FAMILIA'] || '').trim(),
+          desc_familia: String(r['DESC_FAMILIA'] || '').trim(),
+          neto: parseFloat(r['NETO'] || 0),
+          igv: parseFloat(r['IGV'] || 0),
+          inafecto: parseFloat(r['INAFECTO'] || 0),
+          exonerado: parseFloat(r['EXONERADO'] || 0),
+          isc: parseFloat(r['ISC'] || 0),
+          total: parseFloat(r['TOTAL'] || 0),
+          cantidad: parseFloat(r['CANTIDAD'] || 0),
+          valor_unitario: parseFloat(r['VALOR_UNITARIO'] || 0),
+          precio_unitario: parseFloat(r['PRECIO_UNITARIO'] || 0),
+          valor_venta: parseFloat(r['VALOR_VENTA'] || 0),
+          precio_venta: parseFloat(r['PRECIO_VENTA'] || 0),
+          vendedor: String(r['VENDEDOR'] || '').trim()
         };
       }).filter(f => f.factura);
 
       const { error } = await supabase.from('facturas_comercial').insert(nuevasComercial);
       if (error) throw error;
-      
-      showToast(`Procesadas ${nuevasComercial.length} líneas comerciales con cruce automático.`, 'green');
-      procesado = true;
-    }
+      showToast(`Procesadas ${nuevasComercial.length} líneas comerciales con éxito.`, 'green');
 
-    if (!procesado) {
+    } else {
       alert('Archivo de facturas no reconocido. Verifica las cabeceras.');
       return;
     }
@@ -781,8 +702,6 @@ export default function App() {
             resolve();
             return;
           }
-
-          console.log('DEBUG deteccion', { esBbva, esScotiabank, esInterbank, esNacion, headerIdx, filaHeader: rawData[headerIdx] });
 
           const nuevos: any[] = [];
           const egresosRaw: any[] = [];
@@ -889,7 +808,6 @@ export default function App() {
               else if (montoCargo > 0) egresosRaw.push({ ...obj, monto: montoCargo, estado: 'pendiente' });
             }
           } else {
-            // Libro Mayor Genérico
             const headers = rawData[headerIdx].map(h => String(h).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
             const colFecha = headers.findIndex(h => /^fecha$/.test(h) || h.includes('fecha valuta'));
             const colDesc = headers.findIndex(h => h.includes('descripci'));
@@ -905,7 +823,7 @@ export default function App() {
             const colCuenta = headers.findIndex(h => h === 'cuenta' || h.includes('cuenta'));
             const colBanco = headers.findIndex(h => h === 'banco' || h.includes('banco'));
             const colSaldo = headers.findIndex(h => h.includes('saldo'));
-            
+
             for (let i = headerIdx + 1; i < rawData.length; i++) {
               const r = rawData[i];
               if (!r || r.length === 0) continue;
@@ -916,8 +834,8 @@ export default function App() {
               const montoVal = limpiarMonto(r[colMonto]);
               let opVal = String(r[opIndex] || '').trim();
               if (opVal === '00000000' || opVal === '000-000' || opVal === '0') {
-              const fechaParaId = String(r[colFecha] || '').replace(/\D/g, '');
-              opVal = `BATCH-${fechaParaId}-${i}`;
+                const fechaParaId = String(r[colFecha] || '').replace(/\D/g, '');
+                opVal = `BATCH-${fechaParaId}-${i}`;
               }
               if (!opVal || montoVal === 0) continue;
               const ordVal = colOrd !== -1 ? String(r[colOrd] || '').trim() : '';
@@ -941,17 +859,13 @@ export default function App() {
                 saldo: colSaldo !== -1 ? limpiarMonto(r[colSaldo]) : 0
               };
 
-              console.log('DEBUG fila', i, { opVal, cuenta: obj.cuenta, banco: obj.banco, saldo: obj.saldo, montoVal });
-
               if (montoVal > 0) {
-                  nuevos.push({ ...obj, monto: montoVal });
+                nuevos.push({ ...obj, monto: montoVal });
               } else {
-                  egresosRaw.push({ ...obj, monto: Math.abs(montoVal), estado: 'pendiente' });
+                egresosRaw.push({ ...obj, monto: Math.abs(montoVal), estado: 'pendiente' });
               }
             }
           }
-
-          console.log('DEBUG conteo final', { totalFilas: rawData.length - headerIdx - 1, nuevos: nuevos.length, egresosRaw: egresosRaw.length });
 
           const { error: abonosErr } = await supabase.from('abonos').upsert(nuevos, { onConflict: 'operacion,fecha,monto,cuenta,saldo' });
           if (abonosErr) throw abonosErr;
@@ -1130,7 +1044,6 @@ export default function App() {
     }
   };
 
-  // 7. Data Export Utilities
   const handleExportarCSV = () => {
     const headers = [
       'Banco',
@@ -1165,8 +1078,7 @@ export default function App() {
           banco, cuenta, moneda, fecha, descripcion, 
           p.monto.toFixed(2), operacionFmt, ordenante, '', 'pendiente'
         ]);
-      } 
-      else {
+      } else {
         let sumaAplicada = 0;
         const distribuido = p.monto / facturasValidas.length;
 
@@ -1179,7 +1091,7 @@ export default function App() {
                montoAplicado = parseFloat(String(importeLinea));
             }
           } else {
-            const fDB = facturas.find(x => x.factura === f.factura);
+            const fDB = facturasPorNumero.get(f.factura);
             if (fDB) {
               montoAplicado = Math.min(fDB.saldo, p.monto - sumaAplicada);
             }
@@ -1263,7 +1175,7 @@ export default function App() {
       const distribuido = facturasValidas.length > 0 ? (totalAbono / facturasValidas.length) : totalAbono;
 
       facturasValidas.forEach(linea => {
-        const fDB = facturas.find(x => x.factura === linea.factura) || {};
+        const fDB = facturasPorNumero.get(linea.factura) || {};
         const importeLinea = (linea as any).importe_factura;
         const montoAplicado = (importeLinea !== undefined && importeLinea !== null && importeLinea !== 0)
           ? parseFloat(String(importeLinea))
@@ -1368,7 +1280,6 @@ export default function App() {
     showToast('CSV de egresos descargado ✓', 'green');
   };
 
-  // 8. Stats Memoized Calculators
   const statsConciliacion = useMemo(() => {
     const conf = abonos.filter(p => p.estado === 'confirmado');
     const pend = abonos.filter(p => p.estado !== 'confirmado');
@@ -1420,7 +1331,6 @@ export default function App() {
     return `${statsConciliacion.confirmados}/${statsConciliacion.total} confirmados`;
   }, [statsConciliacion]);
 
-  // Loading Session Screen
   if (loadingSession) {
     return (
       <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center">
@@ -1431,14 +1341,12 @@ export default function App() {
     );
   }
 
-  // Not Authenticated
   if (!userAuthenticated) {
     return <LoginOverlay onLoginSuccess={() => setUserAuthenticated(true)} />;
   }
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
-      {/* Sidebar Component */}
       <Sidebar 
         currentPage={currentPage}
         setCurrentPage={setCurrentPage}
@@ -1451,13 +1359,11 @@ export default function App() {
         statsMini={statsMiniMessage}
       />
 
-      {/* Main Panel Content Area */}
       <div 
         className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
           isSidebarCollapsed ? 'ml-16' : 'ml-64'
         }`}
       >
-        {/* Top bar sticky area */}
         <header className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-40 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-md font-bold text-slate-900 font-mono capitalize">
@@ -1480,7 +1386,6 @@ export default function App() {
           </div>
         </header>
 
-        {/* Dynamic page container body */}
         <main className="flex-1 p-6 max-w-7xl w-full mx-auto">
           {loadingData ? (
             <div className="h-[60vh] flex flex-col items-center justify-center">
@@ -1533,8 +1438,8 @@ export default function App() {
                 <Reportes 
                   facturas={facturas} 
                   abonos={abonos} 
-                  datosComerciales={facturasComercial}
-                  catalogo={catalogoComercial} // <--- AÑADIR ESTA LÍNEA
+                  datosComerciales={datosComerciales} 
+                  catalogoComercial={catalogoComercial} 
                 />
               )}
               
@@ -1551,7 +1456,6 @@ export default function App() {
         </main>
       </div>
 
-      {/* Upload Modal */}
       <UploadModal 
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
@@ -1564,10 +1468,9 @@ export default function App() {
         procesarYCerrar={handleProcesarYCerrar}
       />
 
-      {/* Floating Interactive Toast Alerts */}
       {toast && (
         <div 
-          className={`fixed bottom-6 right-6 z-[9999] px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-2.5 border transition-all duration-300 transform translate-y-0 opacity-100 ${
+          className={`fixed bottom-6 right-6 z-9999 px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-2.5 border transition-all duration-300 transform translate-y-0 opacity-100 ${
             toast.type === 'green' 
               ? 'bg-emerald-50 border-emerald-150 text-emerald-800' 
               : toast.type === 'amber' 
