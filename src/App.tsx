@@ -528,7 +528,7 @@ export default function App() {
 
     const limpiarDocNum = (serie: any, numero: any) => {
   const s = String(serie || '').trim().replace(/^0+/, '');
-  const nRaw = String(numero || '').trim().replace(/\D/g, '');
+  const nRaw = String(numero || '').trim().replace(/\D/g, '').replace(/^0+/, '');
   const n = nRaw ? nRaw.padStart(8, '0') : '';
   return s && n ? `${s}-${n}` : null;
 };
