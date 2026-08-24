@@ -527,10 +527,11 @@ export default function App() {
     const esCatalogo = headers.includes('Producto') && headers.includes('Rubro');
 
     const limpiarDocNum = (serie: any, numero: any) => {
-      const s = String(serie || '').trim().replace(/^0+/, '');
-      const n = String(numero || '').trim().replace(/^0+/, '');
-      return s && n ? `${s}-${n}` : null;
-    };
+  const s = String(serie || '').trim().replace(/^0+/, '');
+  const nRaw = String(numero || '').trim().replace(/\D/g, '');
+  const n = nRaw ? nRaw.padStart(8, '0') : '';
+  return s && n ? `${s}-${n}` : null;
+};
 
     const atraparGlosa = (r: any) => {
       return String(r['GLOSA'] || r['Glosa'] || r['glosa'] || r['DESCRIPCION'] || r['Descripcion'] || '').trim();
