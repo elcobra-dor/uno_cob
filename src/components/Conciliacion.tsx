@@ -58,6 +58,8 @@ export default function Conciliacion({
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'pendiente' | 'confirmado' | 'inter'>('pendiente');
   const [filtroMonto, setFiltroMonto] = useState<string>('todos');
   const [filtroMoneda, setFiltroMoneda] = useState<string>('todos');
+  const [filtroMes, setFiltroMes] = useState<string>('todos');
+  const [filtroDia, setFiltroDia] = useState<string>('todos');
   const [busca, setBusca] = useState<string>('');
   
   // NUEVO ESTADO: Controla si el filtro francotirador está activo o apagado
@@ -67,6 +69,34 @@ export default function Conciliacion({
   const montosUnicos = useMemo(() => {
     const montos = abonos.map(p => p.monto);
     return [...new Set(montos)].sort((a, b) => a - b);
+  }, [abonos]);
+
+  const MESES_NOMBRE = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+  // Meses disponibles (YYYY-MM) a partir de la fecha real de cada abono — se
+  // muestran ordenados cronológicamente, con año, para no mezclar julios de
+  // distintos años a medida que se acumulan más años de datos.
+  const mesesUnicos = useMemo(() => {
+    const set = new Set<string>();
+    abonos.forEach(p => {
+      const partes = String(p.fecha || '').slice(0, 7); // "YYYY-MM"
+      if (partes.length === 7) set.add(partes);
+    });
+    return [...set].sort().reverse().map(key => {
+      const [anio, mes] = key.split('-');
+      return { key, label: `${MESES_NOMBRE[parseInt(mes) - 1]} ${anio}` };
+    });
+  }, [abonos]);
+
+  // Días del mes (1-31) presentes en los abonos — útil para encontrar pagos
+  // recurrentes que siempre caen el mismo día (ej. cuotas mensuales).
+  const diasUnicos = useMemo(() => {
+    const set = new Set<number>();
+    abonos.forEach(p => {
+      const dia = parseInt(String(p.fecha || '').slice(8, 10));
+      if (dia) set.add(dia);
+    });
+    return [...set].sort((a, b) => a - b);
   }, [abonos]);
 
   // FIX #8 (rendimiento): antes, el filter+sort de facturas para el dropdown de
@@ -97,6 +127,49 @@ export default function Conciliacion({
   const facturasUSDExcepcionDetraccion = useMemo(() =>
     facturasUSDOrdenadas.filter(f => requiereDetraccionPEN(f)), [facturasUSDOrdenadas]);
 
+  // FIX #10 (escalabilidad): diccionario factura -> objeto, para no hacer .find()
+  // sobre el arreglo completo de facturas en cada fila renderizada (facturaElegida).
+  const facturasPorNumero = useMemo(
+    () => new Map(facturas.map(f => [f.factura, f])),
+    [facturas]
+  );
+
+  // FIX #11 (rendimiento): la etiqueta de cada <option> del selector de facturas
+  // (mes, marca de detracción, razón social recortada, monto formateado) se
+  // recalculaba DENTRO de cada fila, para cada opción — y fmtMonto() usa
+  // Intl.toLocaleString(), una de las operaciones de texto más caras en JS.
+  // El monto y los datos de una factura no cambian entre una fila y otra, así que
+  // se precalculan una sola vez aquí (se recalcula solo si `facturas` cambia, que
+  // es inevitable al confirmar — pero antes se recalculaba una vez POR FILA además).
+  const etiquetasPorFactura = useMemo(() => {
+    const map = new Map<string, {
+      etiquetaMes: string;
+      razonCorta: string;
+      labelMontoBase: string;
+      restaSufijo: string;
+      marcaConBN: string;
+      marcaSinBN: string;
+    }>();
+    facturas.forEach(f => {
+      let etiquetaMes = '';
+      if (f.fecha_doc) {
+        const partes = f.fecha_doc.split('-');
+        if (partes.length >= 2) {
+          const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+          etiquetaMes = `[${meses[parseInt(partes[1]) - 1]}-${partes[0]}] `;
+        }
+      }
+      const originalMonto = f.saldo_original !== undefined ? f.saldo_original : f.saldo;
+      const labelMontoBase = fmtMonto(originalMonto, f.moneda);
+      const restaSufijo = (f.saldo < originalMonto && f.saldo > 0) ? ` (Resta ${fmtMonto(f.saldo, f.moneda)})` : '';
+      const esDetraccion = requiereDetraccionPEN(f);
+      const marcaSinBN = esDetraccion ? '🧾 ' : '';
+      const marcaConBN = esDetraccion ? (f.moneda === 'USD' ? '⚠ ' : '🧾 ') : '';
+      map.set(f.factura, { etiquetaMes, razonCorta: (f.razon_social || '').slice(0, 32), labelMontoBase, restaSufijo, marcaConBN, marcaSinBN });
+    });
+    return map;
+  }, [facturas]);
+
   // Filtering logic
   const abonosFiltrados = useMemo(() => {
     const buscaNorm = norm(busca);
@@ -113,6 +186,12 @@ export default function Conciliacion({
       const pMon = p.moneda === 'USD' ? 'USD' : 'PEN';
       if (filtroMoneda !== 'todos' && pMon !== filtroMoneda) return false;
 
+      // Mes filter (YYYY-MM)
+      if (filtroMes !== 'todos' && String(p.fecha || '').slice(0, 7) !== filtroMes) return false;
+
+      // Día del mes filter
+      if (filtroDia !== 'todos' && parseInt(String(p.fecha || '').slice(8, 10)) !== parseInt(filtroDia)) return false;
+
       // Buscador text filter
       if (buscaNorm) {
         const textToSearch = norm(
@@ -123,7 +202,7 @@ export default function Conciliacion({
 
       return true;
     });
-  }, [abonos, filtroEstado, filtroMonto, filtroMoneda, busca]);
+  }, [abonos, filtroEstado, filtroMonto, filtroMoneda, filtroMes, filtroDia, busca]);
 
   return (
     <div className="space-y-6">
@@ -218,6 +297,34 @@ export default function Conciliacion({
               <option value="USD">Dólares (US$)</option>
             </select>
           </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mes</span>
+            <select
+              value={filtroMes}
+              onChange={(e) => setFiltroMes(e.target.value)}
+              className="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-xl px-3 py-2 focus:outline-none focus:border-capeco-blue focus:bg-white cursor-pointer"
+            >
+              <option value="todos">Todos los meses</option>
+              {mesesUnicos.map(m => (
+                <option key={m.key} value={m.key}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Día</span>
+            <select
+              value={filtroDia}
+              onChange={(e) => setFiltroDia(e.target.value)}
+              className="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-xl px-3 py-2 focus:outline-none focus:border-capeco-blue focus:bg-white cursor-pointer"
+            >
+              <option value="todos">Todos los días</option>
+              {diasUnicos.map(d => (
+                <option key={d} value={d}>Día {d}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex flex-col gap-1 w-full sm:w-auto">
@@ -309,7 +416,7 @@ export default function Conciliacion({
 
             // Find selected invoice in state for detracción warning
             const facturaElegida = p.facturas?.length > 0 
-              ? facturas.find(f => f.factura === p.facturas[0].factura)
+              ? facturasPorNumero.get(p.facturas[0].factura)
               : undefined;
 
             const necesitaAceptarDetraccion = esBN && facturaElegida && requiereDetraccionPEN(facturaElegida) && 
@@ -375,29 +482,13 @@ export default function Conciliacion({
                           >
                             <option value="">— Seleccionar factura —</option>
                             {facturasOpciones.map(f => {
-                              const esExcepcion = esBN && f.moneda === 'USD' && requiereDetraccionPEN(f);
-                              const esDetNormal = !esExcepcion && requiereDetraccionPEN(f);
-                              const marca = esExcepcion ? '⚠ ' : (esDetNormal ? '🧾 ' : '');
-                              const originalMonto = f.saldo_original !== undefined ? f.saldo_original : f.saldo;
-                              let labelMonto = fmtMonto(originalMonto, f.moneda);
-                              
-                              if (f.saldo < originalMonto && f.saldo > 0 && f.factura !== item.factura) {
-                                labelMonto += ` (Resta ${fmtMonto(f.saldo, f.moneda)})`;
-                              }
-
-                              // Etiqueta de Mes para lectura rápida
-                              let etiquetaMes = '';
-                              if (f.fecha_doc) {
-                                const partes = f.fecha_doc.split('-');
-                                if (partes.length >= 2) {
-                                  const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-                                  etiquetaMes = `[${meses[parseInt(partes[1]) - 1]}-${partes[0]}] `;
-                                }
-                              }
+                              const et = etiquetasPorFactura.get(f.factura)!;
+                              const marca = esBN ? et.marcaConBN : et.marcaSinBN;
+                              const resta = f.factura !== item.factura ? et.restaSufijo : '';
 
                               return (
                                 <option key={f.factura} value={f.factura}>
-                                  {etiquetaMes}{marca}{f.razon_social.slice(0, 32)} — {f.factura} — {labelMonto}
+                                  {et.etiquetaMes}{marca}{et.razonCorta} — {f.factura} — {et.labelMontoBase}{resta}
                                 </option>
                               );
                             })}
