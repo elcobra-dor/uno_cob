@@ -568,7 +568,17 @@ export default function App() {
         const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
         const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
 
-        if (!resumenContable[codFactura] || saldoFila < resumenContable[codFactura].saldo) {
+        } else if (esContable) {
+      const resumenContable: { [key: string]: any } = {};
+      rows.forEach(r => {
+        const codFactura = limpiarDocNum(r['SERIE'], r['NUMERO']);
+        if (!codFactura) return;
+        const monedaDoc = String(r['M_REG'] || 'S').trim().toUpperCase();
+        const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
+        const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
+
+        // MAGIA CONTABLE: Math.abs() permite leer Notas de Crédito (-) y Facturas (+) por igual
+        if (!resumenContable[codFactura] || Math.abs(saldoFila) < Math.abs(resumenContable[codFactura].saldo)) {
           resumenContable[codFactura] = {
             factura: codFactura,
             razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
@@ -584,7 +594,9 @@ export default function App() {
           };
         }
       });
-      nuevas = Object.values(resumenContable).filter(f => f.saldo > 0);
+      
+      // FILTRO CORREGIDO: Deja pasar NC (-3600) y Facturas (3600), solo bloquea los ceros exactos
+      nuevas = Object.values(resumenContable).filter(f => Math.abs(f.saldo) > 0.01);
 
       const { error } = await supabase.from('facturas').upsert(nuevas, { onConflict: 'factura' });
       if (error) throw error;
