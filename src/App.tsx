@@ -568,7 +568,6 @@ export default function App() {
         const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
         const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
 
-        } else if (esContable) {
       const resumenContable: { [key: string]: any } = {};
       rows.forEach(r => {
         const codFactura = limpiarDocNum(r['SERIE'], r['NUMERO']);
