@@ -72,19 +72,20 @@ export default function Sidebar({
         {!isCollapsed && (
           <div>
             <div className="flex items-center gap-3 px-2 py-1">
-          {/* Isotipo: Tu Hexágono Guinda */}
-          <img src="/icon-192.png" alt="Logo BAZVAC" className="h-10 w-10 object-contain drop-shadow-sm" />
-          
-          {/* Textos Corporativos */}
-          <div className="flex flex-col">
-            <span className="font-['Montserrat'] font-extrabold text-[#7A1B29] text-xl tracking-tight leading-none">
-              BAZVAC
-            </span>
-            <span className="font-['Lato'] text-[#2C2C2E] text-[10px] uppercase font-bold tracking-widest mt-1">
-              Cobranzas
-            </span>
+              {/* Isotipo: Tu Hexágono Guinda */}
+              <img src="/icon-192.png" alt="Logo BAZVAC" className="h-10 w-10 object-contain drop-shadow-sm" />
+              
+              {/* Textos Corporativos */}
+              <div className="flex flex-col">
+                <span className="font-['Montserrat'] font-extrabold text-[#7A1B29] text-xl tracking-tight leading-none">
+                  BAZVAC
+                </span>
+                <span className="font-['Lato'] text-[#2C2C2E] text-[10px] uppercase font-bold tracking-widest mt-1">
+                  Cobranzas
+                </span>
+              </div>
+            </div>
           </div>
-        </div>
         )}
         
         <button 
