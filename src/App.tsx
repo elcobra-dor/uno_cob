@@ -137,6 +137,7 @@ export default function App() {
 
       const abonosCargados = bdata || [];
 
+      // Mapear conciliaciones a su operación bancaria original
       const concMap: { [key: string]: { factura: string; razon: string; importe_factura: number }[] } = {};
       (cdata || []).forEach((c: any) => {
         if (!concMap[c.operacion]) concMap[c.operacion] = [];
@@ -147,35 +148,72 @@ export default function App() {
         });
       });
 
-      const initialAbonos: Abono[] = abonosCargados.map((b: any, idx: number) => {
-        const concItems = concMap[b.operacion];
-        return {
-          ...b,
-          id: idx,
-          monto: parseFloat(b.monto) || 0,
-          estado: concItems ? 'confirmado' : 'pendiente',
-          facturas: concItems || [{ factura: '', razon: '' }],
-          motivo: concItems ? 'Guardado' : '',
-          confianza: ''
-        };
-      });
-
       const facturasConSaldos = facturasCargadas.map(f => ({ ...f }));
       const facturasPorNumeroLocal = new Map(facturasConSaldos.map(f => [f.factura, f]));
 
-      initialAbonos.forEach(p => {
-        if (p.estado === 'confirmado' && p.facturas) {
-          let disponible = p.monto;
-          p.facturas.forEach(linea => {
-            if (!linea.factura) return;
-            const f = facturasPorNumeroLocal.get(linea.factura);
-            if (f && disponible > 0) {
-              const cobro = Math.min(disponible, f.saldo);
-              f.saldo -= cobro;
-              disponible -= cobro;
-            }
-          });
+      // -----------------------------------------------------------------------------------
+      // MAGIA ARQUITECTÓNICA: Fraccionamiento Dinámico (Split Virtual)
+      // -----------------------------------------------------------------------------------
+      const initialAbonos: Abono[] = [];
+      let idCounter = 1;
+
+      abonosCargados.forEach((b: any) => {
+        const concItems = concMap[b.operacion];
+        const montoTotal = parseFloat(b.monto) || 0;
+
+        // Si la operación no tiene conciliaciones, entra completa como PENDIENTE
+        if (!concItems || concItems.length === 0) {
+            initialAbonos.push({
+              ...b,
+              id: idCounter++,
+              monto: montoTotal,
+              estado: 'pendiente',
+              facturas: [{ factura: '', razon: '' }],
+              motivo: '',
+              confianza: ''
+            });
+            return;
         }
+
+        // Si ya tiene conciliaciones, calculamos el split en vivo
+        const sumaConciliada = concItems.reduce((acc: number, c: any) => acc + c.importe_factura, 0);
+        const sobrante = Math.round((montoTotal - sumaConciliada) * 100) / 100;
+
+        // 1. Tarjeta Confirmada: Muestra EXACTAMENTE lo que ya se cruzó (ej. 413)
+        initialAbonos.push({
+            ...b,
+            id: idCounter++,
+            monto: sumaConciliada, 
+            estado: 'confirmado',
+            facturas: concItems,
+            motivo: 'Guardado',
+            confianza: ''
+        });
+
+        // 2. Tarjeta Virtual (Ghost Card): Si quedó vuelto, le generamos una tarjeta pendiente nueva.
+        // OJO: Conserva el "b.operacion" original para que no rompa la base de datos
+        if (sobrante > 0.01) {
+            initialAbonos.push({
+                ...b,
+                id: idCounter++,
+                descripcion: `${b.descripcion} (SALDO DISPONIBLE)`,
+                monto: sobrante,
+                estado: 'pendiente',
+                facturas: [{ factura: '', razon: '' }],
+                motivo: 'Generado automáticamente por saldo flotante',
+                confianza: ''
+            });
+        }
+        
+        // 3. Descontar las facturas procesadas de la memoria
+        concItems.forEach((c: any) => {
+           if (c.factura !== 'NO_OPERATIVO') {
+              const f = facturasPorNumeroLocal.get(c.factura);
+              if (f) {
+                 f.saldo -= c.importe_factura;
+              }
+           }
+        });
       });
 
       facturasConSaldos.forEach(f => {
@@ -229,7 +267,7 @@ export default function App() {
     try {
       let disponible = p.monto;
       const rows = p.facturas
-        .filter(f => f.factura)
+        .filter(f => f.factura && f.factura !== 'ANTICIPO')
         .map(f => {
           const originalFac = facturasPorNumero.get(f.factura);
           const saldoFactura = originalFac?.saldo ?? originalFac?.saldo_original ?? disponible;
@@ -237,7 +275,7 @@ export default function App() {
           disponible = Math.round((disponible - cobro) * 100) / 100;
 
           return {
-            operacion: String(p.operacion),
+            operacion: String(p.operacion), // Conserva el ID de operacion intacto
             factura: f.factura,
             razon: f.razon || '',
             importe_factura: cobro,
@@ -247,42 +285,15 @@ export default function App() {
           };
         });
 
+      if (rows.length === 0) return;
+
+      // 1. Solo registramos en base de datos en qué se usó la plata. (El banco no se toca)
       const { error } = await supabase.from('conciliaciones').upsert(rows, { onConflict: 'operacion,factura' });
       if (error) throw error;
 
-      const facturasAfectadas = new Set(rows.map(r => r.factura));
-      const cobroPorFactura: { [factura: string]: number } = {};
-      rows.forEach(r => {
-        cobroPorFactura[r.factura] = (cobroPorFactura[r.factura] || 0) + r.importe_factura;
-      });
-
-      const facturasActualizadas = facturas.map(f =>
-        facturasAfectadas.has(f.factura)
-          ? { ...f, saldo: Math.round((f.saldo - (cobroPorFactura[f.factura] || 0)) * 100) / 100 }
-          : f
-      );
-
-      setFacturas(facturasActualizadas);
-
-      setAbonos(prevAbonos => prevAbonos.map(a => {
-        if (a.id === id) {
-          return {
-            ...a,
-            estado: 'confirmado',
-            facturas: rows.map(r => ({ factura: r.factura, razon: r.razon })),
-            motivo: 'Guardado'
-          };
-        }
-        if ((a.estado === 'pendiente' || a.estado === 'sugerida') &&
-            a.facturas.some(f => facturasAfectadas.has(f.factura))) {
-          const sug = sugerirFactura(a, facturasActualizadas);
-          return sug
-            ? { ...a, facturas: [{ factura: sug.factura, razon: sug.razon }], motivo: sug.motivo, confianza: sug.confianza, estado: 'sugerida' }
-            : { ...a, facturas: [{ factura: '', razon: '' }], motivo: '', confianza: '', estado: 'pendiente' };
-        }
-        return a;
-      }));
-
+      // 2. Al refrescar, la función cargarDesdeBD se encargará de hacer la matemática y 
+      // generar el vuelto (tarjeta nueva virtual) si corresponde. ¡Mucho más robusto y sin bucles infinitos!
+      await cargarDesdeBD();
       showToast('Conciliación confirmada e ingresada ✓', 'green');
     } catch (err: any) {
       alert(`Error al guardar conciliación: ${err.message}`);
@@ -568,7 +579,6 @@ export default function App() {
         const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
         const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
 
-        // MAGIA CONTABLE: Math.abs() permite leer Notas de Crédito (-) y Facturas (+) por igual
         if (!resumenContable[codFactura] || Math.abs(saldoFila) < Math.abs(resumenContable[codFactura].saldo)) {
           resumenContable[codFactura] = {
             factura: codFactura,
@@ -586,7 +596,6 @@ export default function App() {
         }
       });
       
-      // FILTRO CORREGIDO: Deja pasar NC (-3600) y Facturas (3600), solo bloquea los ceros exactos
       nuevas = Object.values(resumenContable).filter(f => Math.abs(f.saldo) > 0.01);
 
       const { error } = await supabase.from('facturas').upsert(nuevas, { onConflict: 'factura' });
@@ -1339,7 +1348,7 @@ export default function App() {
     return (
       <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center">
         <Loader2 className="w-10 h-10 text-capeco-blue animate-spin mb-4" />
-        <h2 className="text-sm font-semibold text-slate-800 font-mono">CAPECO ERP</h2>
+        <h2 className="text-sm font-semibold text-slate-800 font-mono">BAZVAC ERP</h2>
         <p className="text-xs text-slate-400 mt-1">Cargando módulos contables de conciliación...</p>
       </div>
     );
@@ -1359,7 +1368,7 @@ export default function App() {
         onExportEstado={handleExportarEstadoBackup}
         dbStatus={dbStatus}
         isCollapsed={isSidebarCollapsed}
-        setIsCollapsed={setIsSidebarCollapsed}
+        setIsCollapsed={setIsCollapsed}
         statsMini={statsMiniMessage}
       />
 
@@ -1382,7 +1391,7 @@ export default function App() {
           <div className="flex items-center gap-3">
             <button 
               onClick={() => setIsUploadOpen(true)}
-              className="px-4 py-2 bg-capeco-blue hover:bg-capeco-blue-dark text-white rounded-xl text-xs font-semibold shadow-sm transition-all duration-150 flex items-center gap-1.5 cursor-pointer"
+              className="px-4 py-2 bg-[#7A1B29] hover:bg-[#5a141e] text-white rounded-xl text-xs font-semibold shadow-sm transition-all duration-150 flex items-center gap-1.5 cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5" />
               Cargar Archivos
@@ -1393,7 +1402,7 @@ export default function App() {
         <main className="flex-1 p-6 max-w-7xl w-full mx-auto">
           {loadingData ? (
             <div className="h-[60vh] flex flex-col items-center justify-center">
-              <RefreshCw className="w-8 h-8 text-capeco-blue animate-spin mb-3" />
+              <RefreshCw className="w-8 h-8 text-[#7A1B29] animate-spin mb-3" />
               <p className="text-xs text-slate-500 font-medium">Sincronizando registros financieros en vivo...</p>
             </div>
           ) : (
