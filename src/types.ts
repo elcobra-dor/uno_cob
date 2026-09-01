@@ -69,3 +69,48 @@ export interface Categoria {
   activo: boolean;
   orden: number;
 }
+
+// ----------------------------------------------------------------------
+// Culqi (conciliación separada de la del banco — ver ConciliacionCulqi.tsx)
+// ----------------------------------------------------------------------
+
+export interface VentaCulqi {
+  id_transaccion: string;
+  fecha: string;
+  hora?: string;
+  nombres?: string;
+  apellidos?: string;
+  correo?: string;
+  monto_venta: number;
+  venta_final: number;
+  comision_total: number;
+  monto_abono: number;
+  estado: 'aprobada' | 'abonada' | 'rechazada' | string;
+  categoria_estado?: string;
+  descripcion?: string;
+  codigo_referencia?: string;
+  codigo_autorizacion?: string;
+  // Campos calculados al cargar (join con conciliaciones_culqi), no existen en la tabla ventas_culqi:
+  factura?: string;
+  razon?: string;
+  lote_culqi?: string | null;
+  estadoMatch: 'pendiente' | 'sugerida' | 'manual' | 'confirmado';
+  motivo?: string;
+  confianza?: string;
+}
+
+export interface LoteCulqi {
+  correlativo: string;
+  fecha_creacion: string;
+  monto_total: number;
+  cantidad_ventas: number;
+  operacion_banco?: string | null;
+  notas?: string;
+}
+
+export interface CandidatoLoteCulqi {
+  fechaVenta: string;
+  ventas: VentaCulqi[];
+  montoTotal: number;
+  abonoBanco?: Abono;
+}
