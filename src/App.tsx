@@ -1554,7 +1554,7 @@ export default function App() {
         onExportSistema={handleExportarSistema}
         onExportEstado={handleExportarEstadoBackup}
         dbStatus={dbStatus}
-        isCollapsed={isSidebarCollapsed}
+        isCollapsed={setIsSidebarCollapsed}
         setIsCollapsed={setIsCollapsed}
         statsMini={statsMiniMessage}
       />
