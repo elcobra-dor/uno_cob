@@ -9,7 +9,8 @@ import {
   FileSpreadsheet, 
   AlertCircle,
   HelpCircle,
-  UploadCloud
+  UploadCloud,
+  CreditCard
 } from 'lucide-react';
 
 interface UploadModalProps {
@@ -21,6 +22,7 @@ interface UploadModalProps {
   onCargarBD: (file: File) => Promise<void>;
   onCorregirGlosas: (file: File) => Promise<void>;
   onCargarBackupJSON: (file: File) => Promise<void>;
+  onCargarVentasCulqi: (file: File) => Promise<void>;
   procesarYCerrar: () => Promise<void>;
 }
 
@@ -42,12 +44,13 @@ export default function UploadModal({
     inter: { loaded: false, label: 'Opcional' },
     bd: { loaded: false, label: 'Opcional' },
     glosas: { loaded: false, label: 'Click para corregir (temporal)' },
-    backup: { loaded: false, label: 'Click o arrastra para restaurar copia de seguridad (.json)' }
+    backup: { loaded: false, label: 'Click o arrastra para restaurar copia de seguridad (.json)' },
+    culqi: { loaded: false, label: 'Reporte de ventas de Culqi (.xlsx)' }
   });
 
   const handleFileChange = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    type: 'facturas' | 'bancos' | 'inter' | 'bd' | 'glosas' | 'backup'
+    type: 'facturas' | 'bancos' | 'inter' | 'bd' | 'glosas' | 'backup' | 'culqi'
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -66,6 +69,8 @@ export default function UploadModal({
         await onCorregirGlosas(file);
       } else if (type === 'backup') {
         await onCargarBackupJSON(file);
+      } else if (type === 'culqi') {
+        await onCargarVentasCulqi(file);
       }
 
       setFilesStatus(prev => ({
@@ -85,7 +90,7 @@ export default function UploadModal({
 
   const handleDrop = async (
     e: React.DragEvent,
-    type: 'facturas' | 'bancos' | 'inter' | 'bd' | 'glosas' | 'backup'
+    type: 'facturas' | 'bancos' | 'inter' | 'bd' | 'glosas' | 'backup' | 'culqi'
   ) => {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
@@ -119,6 +124,8 @@ export default function UploadModal({
         await onCorregirGlosas(file);
       } else if (type === 'backup') {
         await onCargarBackupJSON(file);
+      } else if (type === 'culqi') {
+        await onCargarVentasCulqi(file);
       }
 
       setFilesStatus(prev => ({
@@ -222,6 +229,34 @@ export default function UploadModal({
                 {loading === 'bancos' ? 'Procesando archivo...' : filesStatus.bancos.label}
               </div>
               {filesStatus.bancos.loaded && (
+                <CheckCircle className="w-4 h-4 text-emerald-500 absolute top-3 right-3" />
+              )}
+            </div>
+
+            {/* Ventas Culqi */}
+            <div 
+              onDragOver={handleDragOver}
+              onDrop={(e) => handleDrop(e, 'culqi')}
+              className={`border-2 border-dashed rounded-xl p-5 text-center flex flex-col items-center justify-center transition-all relative ${
+                filesStatus.culqi.loaded 
+                  ? 'border-emerald-500 bg-emerald-50/50' 
+                  : 'border-slate-200 hover:border-capeco-blue hover:bg-slate-50/50'
+              }`}
+            >
+              <input
+                type="file"
+                id="inp-culqi-react"
+                accept=".xlsx,.xls"
+                onChange={(e) => handleFileChange(e, 'culqi')}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                disabled={loading !== null}
+              />
+              <CreditCard className={`w-8 h-8 mb-2 ${filesStatus.culqi.loaded ? 'text-emerald-500' : 'text-slate-400'}`} />
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1 font-mono">Ventas Culqi</div>
+              <div className={`text-xs font-medium max-w-full truncate px-4 ${filesStatus.culqi.loaded ? 'text-emerald-700' : 'text-slate-400'}`}>
+                {loading === 'culqi' ? 'Procesando archivo...' : filesStatus.culqi.label}
+              </div>
+              {filesStatus.culqi.loaded && (
                 <CheckCircle className="w-4 h-4 text-emerald-500 absolute top-3 right-3" />
               )}
             </div>
@@ -353,7 +388,7 @@ export default function UploadModal({
           <button 
             onClick={handleProcesar}
             className="px-6 py-2.5 rounded-xl bg-capeco-blue text-white text-sm font-semibold hover:bg-capeco-blue-dark active:transform active:scale-[0.98] transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={isProcessing || (!filesStatus.facturas.loaded && !filesStatus.bancos.loaded && !filesStatus.inter.loaded && !filesStatus.bd.loaded && !filesStatus.glosas.loaded && !filesStatus.backup.loaded)}
+            disabled={isProcessing || (!filesStatus.facturas.loaded && !filesStatus.bancos.loaded && !filesStatus.inter.loaded && !filesStatus.bd.loaded && !filesStatus.glosas.loaded && !filesStatus.backup.loaded && !filesStatus.culqi.loaded)}
           >
             {isProcessing ? 'Procesando...' : 'Procesar y Conciliar →'}
           </button>
