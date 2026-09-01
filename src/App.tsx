@@ -382,25 +382,44 @@ export default function App() {
         .in('id_transaccion', ids);
       if (errUpdate) throw errUpdate;
 
-      // Si ya se identificó el depósito bancario correspondiente, anotamos el
-      // correlativo en su referencia2 para poder ubicarlo visualmente desde la
-      // Conciliación Bancaria — 'referencia2' NO forma parte de la clave de
-      // deduplicación de extractos (operacion+fecha+monto+cuenta+saldo), así
-      // que esto es seguro y no afecta la reimportación de extractos.
+      // Si el lote tiene un depósito bancario identificado, lo cerramos en automático
       if (candidato.abonoBanco) {
+        // 1. Etiquetamos el depósito con el código del lote
         await supabase
           .from('abonos')
           .update({ referencia2: correlativo })
           .eq('operacion', String(candidato.abonoBanco.operacion));
+
+        // 2. ¡LA MAGIA AQUÍ! Auto-conciliamos el banco real contra todas las facturas del lote
+        const conciliacionesBanco = candidato.ventas
+          .filter(v => v.factura) // Solo pasamos las que tienen factura asignada
+          .map(v => ({
+            operacion: String(candidato.abonoBanco!.operacion),
+            factura: v.factura,
+            razon: v.razon || '',
+            // Aplicamos el monto NETO porque eso es lo que realmente entró al banco
+            importe_factura: v.monto_abono, 
+            estado: 'confirmado',
+            motivo: `Auto-Liquidado por Lote ${correlativo}`,
+            confianza: 'alta'
+          }));
+
+        // Insertamos el cruce directo en el módulo bancario
+        if (conciliacionesBanco.length > 0) {
+          const { error: errConc } = await supabase
+            .from('conciliaciones')
+            .upsert(conciliacionesBanco, { onConflict: 'operacion,factura' });
+          
+          if (errConc) throw errConc;
+        }
       }
 
-      showToast(`Lote ${correlativo} creado ✓`, 'green');
+      showToast(`Lote ${correlativo} creado y auto-conciliado ✓`, 'green');
       await cargarDesdeBD();
     } catch (err: any) {
       alert(`Error al crear el lote: ${err.message}`);
     }
   };
-
   const handleCargarVentasCulqi = async (file: File) => {
     const rows = await parseExcel(file);
     if (!rows.length) {
