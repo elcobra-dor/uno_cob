@@ -23,6 +23,7 @@ interface UploadModalProps {
   onCorregirGlosas: (file: File) => Promise<void>;
   onCargarBackupJSON: (file: File) => Promise<void>;
   onCargarVentasCulqi: (file: File) => Promise<void>;
+  onCargarVentasCulqi, // <--- ¡ESTA ES LA LÍNEA QUE FALTABA!
   procesarYCerrar: () => Promise<void>;
 }
 
