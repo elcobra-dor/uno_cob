@@ -12,7 +12,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  CreditCard
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -48,6 +49,7 @@ export default function Sidebar({
 
   const navItems = [
     { id: 'conciliacion', label: 'Conciliación', icon: <ArrowLeftRight className="w-4 h-4" />, section: 'Principal' },
+    { id: 'culqi', label: 'Conciliación Culqi', icon: <CreditCard className="w-4 h-4" />, section: 'Principal' },
     { id: 'facturas', label: 'Facturas', icon: <FileSpreadsheet className="w-4 h-4" />, section: 'Principal' },
     { id: 'egresos', label: 'Egresos', icon: <ArrowUpRight className="w-4 h-4" />, section: 'Principal' },
     { id: 'categorias', label: 'Categorías', icon: <FolderKey className="w-4 h-4" />, section: 'Principal' },
