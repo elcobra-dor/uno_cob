@@ -100,17 +100,6 @@ export default function Sidebar({
           {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         </button>
       </div>
-        
-        <button 
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className={`p-1.5 rounded-lg border border-slate-150 bg-slate-50 text-slate-500 hover:text-slate-900 hover:border-slate-300 transition-all cursor-pointer ${
-            isCollapsed ? 'mx-auto' : ''
-          }`}
-          title={isCollapsed ? "Expandir menú" : "Colapsar menú"}
-        >
-          {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-        </button>
-      </div>
 
       {/* Navigation Section */}
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
