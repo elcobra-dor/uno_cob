@@ -23,7 +23,6 @@ interface UploadModalProps {
   onCorregirGlosas: (file: File) => Promise<void>;
   onCargarBackupJSON: (file: File) => Promise<void>;
   onCargarVentasCulqi: (file: File) => Promise<void>;
-  onCargarVentasCulqi, // <--- ¡ESTA ES LA LÍNEA QUE FALTABA!
   procesarYCerrar: () => Promise<void>;
 }
 
@@ -36,6 +35,7 @@ export default function UploadModal({
   onCargarBD,
   onCorregirGlosas,
   onCargarBackupJSON,
+  onCargarVentasCulqi,
   procesarYCerrar
 }: UploadModalProps) {
   const [loading, setLoading] = useState<string | null>(null);
