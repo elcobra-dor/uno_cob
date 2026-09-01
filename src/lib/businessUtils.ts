@@ -1,4 +1,4 @@
-import { Factura, Abono, Categoria } from '../types';
+import { Factura, Abono, Categoria, VentaCulqi, CandidatoLoteCulqi } from '../types';
 
 export const UMBRAL_DETRACCION_PEN = 700;
 export const UMBRAL_DETRACCION_USD = 212;
@@ -312,4 +312,97 @@ export function sugerirCategoria(egreso: { descripcion: string; referencia2?: st
     }
   }
   return bestScore >= 3 ? bestCat : null;
+}
+
+// =====================================================================
+// CULQI — sugerencia de lotes (agrupar ventas por día y cruzarlas contra
+// un abono bancario pendiente por monto exacto). Ver conversación con
+// Antonio: validado contra datos reales de julio-2026 antes de construir
+// esto — funciona con ventana de ~5 días hábiles buscando monto exacto,
+// SOLO sobre ventas en estado 'abonada' (las 'aprobada' aún no están
+// depositadas en el banco, no deben agruparse todavía).
+// =====================================================================
+
+function parseFechaISO(fecha: string): Date {
+  const [y, m, d] = fecha.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
+/**
+ * Agrupa ventas de Culqi ya conciliadas con factura (estado 'abonada', sin
+ * lote asignado) por día de transacción, y busca — para cada grupo — un
+ * abono bancario pendiente cuyo monto coincida EXACTAMENTE (±S/0.01) dentro
+ * de una ventana de días hacia adelante (la liquidación de Culqi siempre
+ * llega después de la venta, nunca antes).
+ *
+ * No asume "mismo mes": el abono candidato puede caer en un mes distinto al
+ * de la venta (el correlativo del lote usa el mes/año de LIQUIDACIÓN, no el
+ * de la venta — ver generarCorrelativoCulqi).
+ */
+export function sugerirLotesCulqi(
+  ventasElegibles: VentaCulqi[],
+  abonosPendientes: Abono[],
+  ventanaDiasMax = 6
+): CandidatoLoteCulqi[] {
+  const porFecha = new Map<string, VentaCulqi[]>();
+  ventasElegibles
+    .filter(v => v.estado === 'abonada' && !v.lote_culqi)
+    .forEach(v => {
+      if (!porFecha.has(v.fecha)) porFecha.set(v.fecha, []);
+      porFecha.get(v.fecha)!.push(v);
+    });
+
+  const candidatos: CandidatoLoteCulqi[] = [];
+  const abonosUsados = new Set<number>();
+
+  Array.from(porFecha.keys()).sort().forEach(fecha => {
+    const ventasDelDia = porFecha.get(fecha)!;
+    const montoTotal = Math.round(ventasDelDia.reduce((s, v) => s + v.monto_abono, 0) * 100) / 100;
+    const fechaVenta = parseFechaISO(fecha);
+
+    let mejorIdx = -1;
+    let mejorLag = Infinity;
+    abonosPendientes.forEach((ab, idx) => {
+      if (abonosUsados.has(idx)) return;
+      if (Math.abs(ab.monto - montoTotal) > 0.01) return;
+      const fechaBanco = parseFechaISO(ab.fecha);
+      const lag = Math.round((fechaBanco.getTime() - fechaVenta.getTime()) / 86400000);
+      if (lag < 0 || lag > ventanaDiasMax) return;
+      if (lag < mejorLag) {
+        mejorLag = lag;
+        mejorIdx = idx;
+      }
+    });
+
+    if (mejorIdx !== -1) abonosUsados.add(mejorIdx);
+
+    candidatos.push({
+      fechaVenta: fecha,
+      ventas: ventasDelDia,
+      montoTotal,
+      abonoBanco: mejorIdx !== -1 ? abonosPendientes[mejorIdx] : undefined
+    });
+  });
+
+  return candidatos;
+}
+
+/**
+ * Genera el siguiente correlativo CULQI-{N}-{MM}-{AAAA} para el mes/año de
+ * LIQUIDACIÓN (fecha del abono bancario vinculado, o de hoy si aún no hay
+ * abono identificado). N reinicia cada mes.
+ */
+export function generarCorrelativoCulqi(lotesExistentes: { correlativo: string }[], fechaLiquidacion: Date): string {
+  const mm = String(fechaLiquidacion.getMonth() + 1).padStart(2, '0');
+  const yyyy = fechaLiquidacion.getFullYear();
+  const patron = new RegExp(`^CULQI-(\\d+)-${mm}-${yyyy}$`);
+  let maxN = 0;
+  lotesExistentes.forEach(l => {
+    const m = l.correlativo.match(patron);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > maxN) maxN = n;
+    }
+  });
+  return `CULQI-${maxN + 1}-${mm}-${yyyy}`;
 }
