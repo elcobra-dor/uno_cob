@@ -27,8 +27,7 @@ export default function ConciliacionCulqi({
     [facturas]
   );
 
-  // Solo 'aprobada' y 'abonada' son candidatas a conciliar; 'rechazada' se
-  // descarta (nunca llega dinero al banco por esa venta).
+  // Solo 'aprobada' y 'abonada' son candidatas a conciliar; 'rechazada' se descarta
   const ventasElegibles = useMemo(
     () => ventasCulqi.filter(v => v.estado === 'aprobada' || v.estado === 'abonada'),
     [ventasCulqi]
@@ -50,7 +49,7 @@ export default function ConciliacionCulqi({
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Conciliadas, sin lote</div>
-          <div className="font-mono text-2xl font-bold text-capeco-blue">{sinLote.length}</div>
+          <div className="font-mono text-2xl font-bold text-[#7A1B29]">{sinLote.length}</div>
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Lotes creados</div>
@@ -63,7 +62,7 @@ export default function ConciliacionCulqi({
         <button
           onClick={() => setTab('match')}
           className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-            tab === 'match' ? 'border-capeco-blue text-capeco-blue' : 'border-transparent text-slate-400 hover:text-slate-600'
+            tab === 'match' ? 'border-[#7A1B29] text-[#7A1B29]' : 'border-transparent text-slate-400 hover:text-slate-600'
           }`}
         >
           Venta ↔ Factura ({pendientes.length})
@@ -71,7 +70,7 @@ export default function ConciliacionCulqi({
         <button
           onClick={() => setTab('lotes')}
           className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-            tab === 'lotes' ? 'border-capeco-blue text-capeco-blue' : 'border-transparent text-slate-400 hover:text-slate-600'
+            tab === 'lotes' ? 'border-[#7A1B29] text-[#7A1B29]' : 'border-transparent text-slate-400 hover:text-slate-600'
           }`}
         >
           Lotes ({candidatosConMonto.length} sugeridos)
@@ -85,34 +84,59 @@ export default function ConciliacionCulqi({
               No hay ventas pendientes de vincular con una factura.
             </div>
           ) : (
-            pendientes.map(v => (
-              <div key={v.id_transaccion} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col sm:flex-row gap-3 sm:items-center">
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-slate-900 truncate">{v.descripcion || '(Sin descripción)'}</div>
-                  <div className="text-[10px] font-mono text-slate-400 mt-1">
-                    {v.fecha} · {v.nombres} {v.apellidos} · {v.id_transaccion}
-                    <span className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold ${v.estado === 'abonada' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                      {v.estado.toUpperCase()}
-                    </span>
+            pendientes.map(v => {
+              // 🎯 LÓGICA FRANCOTIRADOR: Filtrar facturas que coinciden exactamente con el importe (tolerancia de 5 céntimos)
+              const facturasFrancotirador = facturasOrdenadas.filter(
+                f => Math.abs(f.saldo - v.venta_final) <= 0.05
+              );
+
+              return (
+                <div key={v.id_transaccion} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col sm:flex-row gap-3 sm:items-center hover:border-emerald-100 transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-slate-900 truncate">{v.descripcion || '(Sin descripción)'}</div>
+                    <div className="text-[10px] font-mono text-slate-400 mt-1">
+                      {v.fecha} · {v.nombres} {v.apellidos} · {v.id_transaccion}
+                      <span className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold ${v.estado === 'abonada' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                        {v.estado.toUpperCase()}
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <div className="font-mono text-sm font-bold text-slate-900 whitespace-nowrap">
-                  {fmtMonto(v.venta_final, 'PEN')}
-                </div>
-                <select
-                  value={v.factura || ''}
-                  onChange={(e) => onAsignarFactura(v.id_transaccion, e.target.value)}
-                  className="bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800 rounded-xl px-3 py-2.5 focus:outline-none focus:border-capeco-blue focus:bg-white cursor-pointer max-w-full sm:max-w-xs"
-                >
-                  <option value="">— Seleccionar factura —</option>
-                  {facturasOrdenadas.map(f => (
-                    <option key={f.factura} value={f.factura}>
-                      {(f.razon_social || '').slice(0, 32)} — {f.factura} — {fmtMonto(f.saldo, f.moneda)}
+                  <div className="font-mono text-sm font-bold text-slate-900 whitespace-nowrap">
+                    {fmtMonto(v.venta_final, 'PEN')}
+                  </div>
+                  <select
+                    value={v.factura || ''}
+                    onChange={(e) => onAsignarFactura(v.id_transaccion, e.target.value)}
+                    className={`border text-xs font-medium rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#7A1B29] cursor-pointer max-w-full sm:max-w-xs transition-colors ${
+                      facturasFrancotirador.length > 0 
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                        : 'bg-slate-50 border-slate-200 text-slate-800'
+                    }`}
+                  >
+                    <option value="">
+                      {facturasFrancotirador.length === 0 
+                        ? '⚠️ Sin match exacto (Ver todas)' 
+                        : '🎯 Seleccionar match exacto'}
                     </option>
-                  ))}
-                </select>
-              </div>
-            ))
+                    
+                    {/* Si el francotirador encuentra match, SOLO muestra esas para no saturar. 
+                        Si no encuentra nada, muestra todas por si hay que hacer un abono parcial. */}
+                    {facturasFrancotirador.length > 0 
+                      ? facturasFrancotirador.map(f => (
+                          <option key={f.factura} value={f.factura}>
+                            {(f.razon_social || '').slice(0, 32)} — {f.factura} — {fmtMonto(f.saldo, f.moneda)}
+                          </option>
+                        ))
+                      : facturasOrdenadas.map(f => (
+                          <option key={f.factura} value={f.factura}>
+                            {(f.razon_social || '').slice(0, 32)} — {f.factura} — {fmtMonto(f.saldo, f.moneda)}
+                          </option>
+                        ))
+                    }
+                  </select>
+                </div>
+              );
+            })
           )}
 
           {confirmadas.length > 0 && (
@@ -171,7 +195,7 @@ export default function ConciliacionCulqi({
                       )}
                       <button
                         onClick={() => onCrearLote(c)}
-                        className="px-4 py-2 rounded-xl bg-capeco-blue text-white text-[11px] font-semibold hover:bg-capeco-blue-dark transition-all flex items-center gap-1.5 cursor-pointer"
+                        className="px-4 py-2 rounded-xl bg-[#7A1B29] text-white text-[11px] font-semibold hover:bg-[#5a141e] transition-all flex items-center gap-1.5 cursor-pointer"
                       >
                         <Layers className="w-3.5 h-3.5" />
                         Crear Lote
