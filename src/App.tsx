@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase, fetchAllRows } from './lib/supabase';
-import { Factura, Abono, Egreso, Categoria } from './types';
+import { Factura, Abono, Egreso, Categoria, VentaCulqi, LoteCulqi, CandidatoLoteCulqi } from './types';
 import Sidebar from './components/Sidebar';
 import LoginOverlay from './components/LoginOverlay';
 import UploadModal from './components/UploadModal';
@@ -10,12 +10,15 @@ import Egresos from './components/Egresos';
 import Categorias from './components/Categorias';
 import Reportes from './components/Reportes';
 import AsistenteAI from './components/AsistenteAI';
+import ConciliacionCulqi from './components/ConciliacionCulqi';
 import { 
   sugerirFactura, 
   fmtFecha, 
   fmtMonto, 
   requiereDetraccionPEN, 
-  esAbonoDetraccionBN 
+  esAbonoDetraccionBN,
+  sugerirLotesCulqi,
+  generarCorrelativoCulqi
 } from './lib/businessUtils';
 import * as XLSX from 'xlsx';
 import { 
@@ -63,6 +66,8 @@ export default function App() {
   const [bdMap, setBdMap] = useState<{ [key: string]: any }>({});
   const [datosComerciales, setDatosComerciales] = useState<any[]>([]);
   const [catalogoComercial, setCatalogoComercial] = useState<any[]>([]);
+  const [ventasCulqi, setVentasCulqi] = useState<VentaCulqi[]>([]);
+  const [lotesCulqi, setLotesCulqi] = useState<LoteCulqi[]>([]);
 
   const facturasPorNumero = useMemo(
     () => new Map(facturas.map(f => [f.factura, f])),
@@ -119,14 +124,17 @@ export default function App() {
     setDbStatus('connecting');
 
     try {
-      const [fdata, bdata, cdata, edata, catData, comData, catalogoData] = await Promise.all([
+      const [fdata, bdata, cdata, edata, catData, comData, catalogoData, vcData, ccData, lcData] = await Promise.all([
         fetchAllRows<any>((from, to) => supabase.from('facturas').select('*').order('fecha_doc').range(from, to)),
         fetchAllRows<any>((from, to) => supabase.from('abonos').select('*').order('fecha').range(from, to)),
         fetchAllRows<any>((from, to) => supabase.from('conciliaciones').select('*').range(from, to)),
         fetchAllRows<any>((from, to) => supabase.from('egresos').select('*').order('fecha').range(from, to)),
         fetchAllRows<any>((from, to) => supabase.from('categorias').select('*').eq('activo', true).order('orden').range(from, to)),
         fetchAllRows<any>((from, to) => supabase.from('facturas_comercial').select('*').range(from, to)),
-        fetchAllRows<any>((from, to) => supabase.from('catalogo_comercial').select('*').range(from, to))
+        fetchAllRows<any>((from, to) => supabase.from('catalogo_comercial').select('*').range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from('ventas_culqi').select('*').order('fecha').range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from('conciliaciones_culqi').select('*').range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from('lotes_culqi').select('*').range(from, to))
       ]);
 
       const facturasCargadas = (fdata || []).map((f: any) => ({
@@ -237,12 +245,56 @@ export default function App() {
         monto: parseFloat(e.monto) || 0,
       }));
 
+      // ------------------------------------------------------------------
+      // CULQI: tablas 100% separadas del banco. Cruzamos ventas_culqi con
+      // conciliaciones_culqi (venta -> factura) para saber qué venta ya
+      // tiene match y a qué lote pertenece, si ya se agrupó.
+      // ------------------------------------------------------------------
+      const concCulqiMap: { [id_transaccion: string]: { factura: string; razon: string; importe_factura: number; lote_culqi: string | null } } = {};
+      (ccData || []).forEach((c: any) => {
+        // Si hubiera más de una línea por venta, nos quedamos con la primera
+        // (el flujo actual es 1 venta -> 1 factura).
+        if (!concCulqiMap[c.id_transaccion]) {
+          concCulqiMap[c.id_transaccion] = {
+            factura: c.factura,
+            razon: c.razon,
+            importe_factura: parseFloat(c.importe_factura) || 0,
+            lote_culqi: c.lote_culqi || null
+          };
+        }
+      });
+
+      const ventasCulqiCargadas: VentaCulqi[] = (vcData || []).map((v: any) => {
+        const match = concCulqiMap[v.id_transaccion];
+        return {
+          ...v,
+          monto_venta: parseFloat(v.monto_venta) || 0,
+          venta_final: parseFloat(v.venta_final) || 0,
+          comision_total: parseFloat(v.comision_total) || 0,
+          monto_abono: parseFloat(v.monto_abono) || 0,
+          factura: match?.factura,
+          razon: match?.razon,
+          lote_culqi: match?.lote_culqi || null,
+          estadoMatch: match ? 'confirmado' : 'pendiente',
+          motivo: '',
+          confianza: ''
+        };
+      });
+
+      const lotesCulqiCargados: LoteCulqi[] = (lcData || []).map((l: any) => ({
+        ...l,
+        monto_total: parseFloat(l.monto_total) || 0,
+        cantidad_ventas: parseInt(l.cantidad_ventas) || 0
+      }));
+
       setFacturas(facturasConSaldos);
       setAbonos(initialAbonos);
       setEgresos(egresosCargados);
       setCategorias(catData || []);
       setDatosComerciales(comData || []);
       setCatalogoComercial(catalogoData || []);
+      setVentasCulqi(ventasCulqiCargadas);
+      setLotesCulqi(lotesCulqiCargados);
       setDbStatus('connected');
       showToast('Datos sincronizados correctamente', 'green');
     } catch (err: any) {
@@ -259,6 +311,141 @@ export default function App() {
       cargarDesdeBD();
     }
   }, [userAuthenticated, cargarDesdeBD]);
+
+  // ------------------------------------------------------------------------
+  // CULQI — tablas separadas del banco (ventas_culqi / conciliaciones_culqi /
+  // lotes_culqi). Nunca se toca `abonos` salvo para anotar el correlativo en
+  // `referencia2` una vez que se identifica el depósito real (campo libre,
+  // fuera de la clave de deduplicación de extractos).
+  // ------------------------------------------------------------------------
+
+  const candidatosLoteCulqi = useMemo(() => {
+    const elegibles = ventasCulqi.filter(v => v.estadoMatch === 'confirmado');
+    const abonosPendientesBanco = abonos.filter(a => a.estado !== 'confirmado');
+    return sugerirLotesCulqi(elegibles, abonosPendientesBanco);
+  }, [ventasCulqi, abonos]);
+
+  const handleAsignarFacturaCulqi = async (id_transaccion: string, factura: string) => {
+    const venta = ventasCulqi.find(v => v.id_transaccion === id_transaccion);
+    if (!venta) return;
+
+    try {
+      // Primero se limpia cualquier vínculo previo de esta venta (si el usuario
+      // está cambiando la factura asignada), luego se inserta el nuevo si aplica.
+      const { error: errDelete } = await supabase.from('conciliaciones_culqi').delete().eq('id_transaccion', id_transaccion);
+      if (errDelete) throw errDelete;
+
+      if (factura) {
+        const fac = facturasPorNumero.get(factura);
+        const row = {
+          id_transaccion,
+          factura,
+          razon: fac?.razon_social || '',
+          importe_factura: venta.venta_final,
+          estado: 'confirmado',
+          motivo: 'Asignación manual',
+          confianza: ''
+        };
+        const { error: errInsert } = await supabase.from('conciliaciones_culqi').upsert([row], { onConflict: 'id_transaccion,factura' });
+        if (errInsert) throw errInsert;
+      }
+
+      showToast(factura ? 'Venta Culqi vinculada a factura ✓' : 'Vínculo removido', factura ? 'green' : '');
+      await cargarDesdeBD();
+    } catch (err: any) {
+      alert(`Error al vincular la venta con la factura: ${err.message}`);
+    }
+  };
+
+  const handleCrearLoteCulqi = async (candidato: CandidatoLoteCulqi) => {
+    try {
+      const fechaLiquidacion = candidato.abonoBanco
+        ? new Date(candidato.abonoBanco.fecha + 'T00:00:00')
+        : new Date();
+
+      const correlativo = generarCorrelativoCulqi(lotesCulqi, fechaLiquidacion);
+
+      const loteRow = {
+        correlativo,
+        monto_total: candidato.montoTotal,
+        cantidad_ventas: candidato.ventas.length,
+        operacion_banco: candidato.abonoBanco ? String(candidato.abonoBanco.operacion) : null
+      };
+
+      const { error: errLote } = await supabase.from('lotes_culqi').insert([loteRow]);
+      if (errLote) throw errLote;
+
+      const ids = candidato.ventas.map(v => v.id_transaccion);
+      const { error: errUpdate } = await supabase
+        .from('conciliaciones_culqi')
+        .update({ lote_culqi: correlativo })
+        .in('id_transaccion', ids);
+      if (errUpdate) throw errUpdate;
+
+      // Si ya se identificó el depósito bancario correspondiente, anotamos el
+      // correlativo en su referencia2 para poder ubicarlo visualmente desde la
+      // Conciliación Bancaria — 'referencia2' NO forma parte de la clave de
+      // deduplicación de extractos (operacion+fecha+monto+cuenta+saldo), así
+      // que esto es seguro y no afecta la reimportación de extractos.
+      if (candidato.abonoBanco) {
+        await supabase
+          .from('abonos')
+          .update({ referencia2: correlativo })
+          .eq('operacion', String(candidato.abonoBanco.operacion));
+      }
+
+      showToast(`Lote ${correlativo} creado ✓`, 'green');
+      await cargarDesdeBD();
+    } catch (err: any) {
+      alert(`Error al crear el lote: ${err.message}`);
+    }
+  };
+
+  const handleCargarVentasCulqi = async (file: File) => {
+    const rows = await parseExcel(file);
+    if (!rows.length) {
+      alert('El archivo de ventas de Culqi está vacío.');
+      return;
+    }
+
+    const headers = Object.keys(rows[0]);
+    const esVentasCulqi = headers.includes('ID Transaccion') && headers.includes('Monto Aproximado Abono') && headers.includes('Categoria de Estado');
+    if (!esVentasCulqi) {
+      alert('El archivo no parece ser un reporte de ventas de Culqi. Verifica las cabeceras (se espera "ID Transaccion", "Monto Aproximado Abono", "Categoria de Estado").');
+      return;
+    }
+
+    const nuevasVentas = rows
+      .map((r: any) => ({
+        id_transaccion: String(r['ID Transaccion'] || '').trim(),
+        fecha: fmtFecha(r['Fecha de la transaccion']),
+        hora: String(r['Hora de la transaccion'] || '').trim(),
+        nombres: String(r['Nombres'] || '').trim(),
+        apellidos: String(r['Apellidos'] || '').trim(),
+        correo: String(r['Correo Electronico'] || '').trim(),
+        monto_venta: parseFloat(r['Monto VENTA']) || 0,
+        venta_final: parseFloat(r['Venta Final']) || 0,
+        comision_total: parseFloat(r['Comision TOTAL']) || 0,
+        monto_abono: parseFloat(r['Monto Aproximado Abono']) || 0,
+        estado: String(r['Estado'] || '').trim().toLowerCase(),
+        categoria_estado: String(r['Categoria de Estado'] || '').trim(),
+        descripcion: String(r['Descripcion'] || '').trim(),
+        codigo_referencia: String(r['Codigo Referencia'] || '').trim(),
+        codigo_autorizacion: String(r['Codigo Autorizacion'] || '').trim()
+      }))
+      .filter((v: any) => v.id_transaccion && v.fecha);
+
+    if (!nuevasVentas.length) {
+      alert('No se encontraron filas válidas en el archivo (falta ID Transaccion o fecha).');
+      return;
+    }
+
+    const { error } = await supabase.from('ventas_culqi').upsert(nuevasVentas, { onConflict: 'id_transaccion' });
+    if (error) throw error;
+
+    showToast(`Procesadas ${nuevasVentas.length} ventas de Culqi ✓`, 'green');
+    await cargarDesdeBD();
+  };
 
   const handleConfirmar = async (id: number) => {
     const p = abonos.find(x => x.id === id);
@@ -1381,6 +1568,7 @@ export default function App() {
           <div className="flex items-center gap-3">
             <h1 className="text-md font-bold text-slate-900 font-mono capitalize">
               {currentPage === 'conciliacion' && 'Conciliación Bancaria'}
+              {currentPage === 'culqi' && 'Conciliación Culqi'}
               {currentPage === 'facturas' && 'Facturas Pendientes'}
               {currentPage === 'egresos' && 'Clasificación de Egresos'}
               {currentPage === 'categorias' && 'Administrar Categorías Presupuestarias'}
@@ -1464,6 +1652,17 @@ export default function App() {
                   showToast={showToast}
                 />
               )}
+
+              {currentPage === 'culqi' && (
+                <ConciliacionCulqi
+                  ventasCulqi={ventasCulqi}
+                  facturas={facturas}
+                  lotesCulqi={lotesCulqi}
+                  candidatosLote={candidatosLoteCulqi}
+                  onAsignarFactura={handleAsignarFacturaCulqi}
+                  onCrearLote={handleCrearLoteCulqi}
+                />
+              )}
             </>
           )}
         </main>
@@ -1478,6 +1677,7 @@ export default function App() {
         onCargarBD={handleCargarBD}
         onCorregirGlosas={handleCorregirGlosas}
         onCargarBackupJSON={handleCargarBackupJSON}
+        onCargarVentasCulqi={handleCargarVentasCulqi}
         procesarYCerrar={handleProcesarYCerrar}
       />
 
