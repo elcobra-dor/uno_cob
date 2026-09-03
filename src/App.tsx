@@ -68,6 +68,7 @@ export default function App() {
   const [catalogoComercial, setCatalogoComercial] = useState<any[]>([]);
   const [ventasCulqi, setVentasCulqi] = useState<VentaCulqi[]>([]);
   const [lotesCulqi, setLotesCulqi] = useState<LoteCulqi[]>([]);
+  const [abonosFiltradosVista, setAbonosFiltradosVista] = useState<Abono[]>([]);
 
   const facturasPorNumero = useMemo(
     () => new Map(facturas.map(f => [f.factura, f])),
