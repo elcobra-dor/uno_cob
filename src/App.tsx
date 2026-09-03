@@ -549,6 +549,23 @@ export default function App() {
     const motivo = prompt("Clasificar abono no operativo (ej: Depósito a plazo, Abono incorrecto, Traspasos):");
     if (!motivo || !motivo.trim()) return;
 
+    // ⚡ ACTUALIZACIÓN OPTIMISTA: Cambiamos la vista instantáneamente
+    // sin bloquear la pantalla del usuario.
+    setAbonos(prev => prev.map(item => {
+      if (item.id === id) {
+        return {
+          ...item,
+          estado: 'confirmado',
+          facturas: [{ factura: 'NO_OPERATIVO', razon: motivo.trim() }],
+          motivo: 'Clasificación Manual',
+          confianza: 'alta'
+        };
+      }
+      return item;
+    }));
+
+    showToast('Clasificado como No Operativo ✓', 'green');
+
     try {
       const row = {
         operacion: String(p.operacion),
@@ -560,13 +577,16 @@ export default function App() {
         confianza: 'alta'
       };
 
+      // Guardamos en la nube en segundo plano (silenciosamente)
       const { error } = await supabase.from('conciliaciones').upsert([row], { onConflict: 'operacion,factura' });
       if (error) throw error;
+      
+      // ELIMINAMOS el `await cargarDesdeBD()` para evitar la pantalla de carga de 3 segundos.
 
-      showToast('Clasificado como No Operativo ✓', 'green');
-      await cargarDesdeBD();
     } catch (err: any) {
-      alert(`Error al clasificar: ${err.message}`);
+      alert(`Error al clasificar en la nube: ${err.message}`);
+      // Solo si la señal de internet falla, recargamos la BD para revertir el error visual
+      await cargarDesdeBD();
     }
   };
 
