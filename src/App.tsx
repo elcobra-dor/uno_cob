@@ -1406,7 +1406,8 @@ export default function App() {
   };
 
   const handleExportarSistema = () => {
-    const confirmados = abonos.filter(
+    const listaExportar = currentPage === 'conciliacion' ? abonosFiltradosVista : abonos;
+    const confirmados = listaExportar.filter(
       p => (p.estado === 'confirmado' || p.estado === 'manual') && p.facturas && p.facturas.some(f => f.factura && f.factura !== 'NO_OPERATIVO')
     );
 
