@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Abono, Factura } from '../types';
 import { 
   fmtMonto, 
@@ -32,6 +32,7 @@ interface ConciliacionProps {
   onQuitarLinea: (id: number, idx: number) => void;
   onCambiarLinea: (id: number, idx: number, val: string) => void;
   onToggleDetraccion: (id: number, checked: boolean) => void;
+  onFiltroChange?: (filtrados: Abono[]) => void; // EL PUENTE: Avisa al archivo principal
   stats: {
     total: number;
     confirmados: number;
@@ -53,6 +54,7 @@ export default function Conciliacion({
   onQuitarLinea,
   onCambiarLinea,
   onToggleDetraccion,
+  onFiltroChange,
   stats
 }: ConciliacionProps) {
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'pendiente' | 'confirmado' | 'inter'>('pendiente');
@@ -62,10 +64,8 @@ export default function Conciliacion({
   const [filtroDia, setFiltroDia] = useState<string>('todos');
   const [busca, setBusca] = useState<string>('');
   
-  // NUEVO ESTADO: Controla si el filtro francotirador está activo o apagado
   const [verTodas, setVerTodas] = useState(false);
 
-  // Dropdown of unique amounts
   const montosUnicos = useMemo(() => {
     const montos = abonos.map(p => p.monto);
     return [...new Set(montos)].sort((a, b) => a - b);
@@ -73,13 +73,10 @@ export default function Conciliacion({
 
   const MESES_NOMBRE = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
-  // Meses disponibles (YYYY-MM) a partir de la fecha real de cada abono — se
-  // muestran ordenados cronológicamente, con año, para no mezclar julios de
-  // distintos años a medida que se acumulan más años de datos.
   const mesesUnicos = useMemo(() => {
     const set = new Set<string>();
     abonos.forEach(p => {
-      const partes = String(p.fecha || '').slice(0, 7); // "YYYY-MM"
+      const partes = String(p.fecha || '').slice(0, 7);
       if (partes.length === 7) set.add(partes);
     });
     return [...set].sort().reverse().map(key => {
@@ -88,8 +85,6 @@ export default function Conciliacion({
     });
   }, [abonos]);
 
-  // Días del mes (1-31) presentes en los abonos — útil para encontrar pagos
-  // recurrentes que siempre caen el mismo día (ej. cuotas mensuales).
   const diasUnicos = useMemo(() => {
     const set = new Set<number>();
     abonos.forEach(p => {
@@ -99,12 +94,6 @@ export default function Conciliacion({
     return [...set].sort((a, b) => a - b);
   }, [abonos]);
 
-  // FIX #8 (rendimiento): antes, el filter+sort de facturas para el dropdown de
-  // cada fila se recalculaba DENTRO del .map() de renderizado — es decir, una vez
-  // POR CADA abono visible (¡con ~500 abonos x ~1500 facturas, cientos de sorts
-  // completos con localeCompare en cada render!). Ahora se precalcula una sola vez
-  // aquí, memoizado, y cada fila solo hace un filtro liviano sobre esta lista ya
-  // ordenada (sin volver a ordenar).
   const comparadorFactura = (a: Factura, b: Factura) => {
     const ordenNombre = (a.razon_social || '').localeCompare(b.razon_social || '');
     if (ordenNombre !== 0) return ordenNombre;
@@ -122,25 +111,14 @@ export default function Conciliacion({
     .filter(f => f.saldo > 0.01 && (f.moneda === 'USD' ? 'USD' : 'PEN') === 'USD')
     .sort(comparadorFactura), [facturas]);
 
-  // Excepción detracción BN: facturas USD elegibles, ya ordenadas (lista chica, se
-  // recalcula poco porque depende solo de facturas, igual que las de arriba).
   const facturasUSDExcepcionDetraccion = useMemo(() =>
     facturasUSDOrdenadas.filter(f => requiereDetraccionPEN(f)), [facturasUSDOrdenadas]);
 
-  // FIX #10 (escalabilidad): diccionario factura -> objeto, para no hacer .find()
-  // sobre el arreglo completo de facturas en cada fila renderizada (facturaElegida).
   const facturasPorNumero = useMemo(
     () => new Map(facturas.map(f => [f.factura, f])),
     [facturas]
   );
 
-  // FIX #11 (rendimiento): la etiqueta de cada <option> del selector de facturas
-  // (mes, marca de detracción, razón social recortada, monto formateado) se
-  // recalculaba DENTRO de cada fila, para cada opción — y fmtMonto() usa
-  // Intl.toLocaleString(), una de las operaciones de texto más caras en JS.
-  // El monto y los datos de una factura no cambian entre una fila y otra, así que
-  // se precalculan una sola vez aquí (se recalcula solo si `facturas` cambia, que
-  // es inevitable al confirmar — pero antes se recalculaba una vez POR FILA además).
   const etiquetasPorFactura = useMemo(() => {
     const map = new Map<string, {
       etiquetaMes: string;
@@ -170,39 +148,34 @@ export default function Conciliacion({
     return map;
   }, [facturas]);
 
-  // Filtering logic
   const abonosFiltrados = useMemo(() => {
     const buscaNorm = norm(busca);
     return abonos.filter(p => {
-      // Estado filter
       if (filtroEstado === 'pendiente' && p.estado === 'confirmado') return false;
       if (filtroEstado === 'confirmado' && p.estado !== 'confirmado') return false;
       if (filtroEstado === 'inter' && !p.ordenante) return false;
-
-      // Monto filter
       if (filtroMonto !== 'todos' && p.monto !== parseFloat(filtroMonto)) return false;
-
-      // Moneda filter
       const pMon = p.moneda === 'USD' ? 'USD' : 'PEN';
       if (filtroMoneda !== 'todos' && pMon !== filtroMoneda) return false;
-
-      // Mes filter (YYYY-MM)
       if (filtroMes !== 'todos' && String(p.fecha || '').slice(0, 7) !== filtroMes) return false;
-
-      // Día del mes filter
       if (filtroDia !== 'todos' && parseInt(String(p.fecha || '').slice(8, 10)) !== parseInt(filtroDia)) return false;
 
-      // Buscador text filter
       if (buscaNorm) {
         const textToSearch = norm(
           `${p.descripcion} ${p.operacion} ${p.ordenante || ''} ${(p.facturas || []).map(f => `${f.factura} ${f.razon}`).join(' ')}`
         );
         if (!textToSearch.includes(buscaNorm)) return false;
       }
-
       return true;
     });
   }, [abonos, filtroEstado, filtroMonto, filtroMoneda, filtroMes, filtroDia, busca]);
+
+  // LA MAGIA AQUÍ: Cada vez que abonosFiltrados cambia, se lo enviamos a App.tsx
+  useEffect(() => {
+    if (onFiltroChange) {
+      onFiltroChange(abonosFiltrados);
+    }
+  }, [abonosFiltrados, onFiltroChange]);
 
   return (
     <div className="space-y-6">
@@ -245,7 +218,6 @@ export default function Conciliacion({
       <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-wrap gap-4 items-center justify-between">
         <div className="flex flex-wrap gap-3 items-center">
           
-          {/* BOTÓN MODO VISTA (NUEVO) */}
           <div className="flex flex-col gap-1">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Modo Vista</span>
             <button 
@@ -365,7 +337,6 @@ export default function Conciliacion({
             const isSuggested = p.estado === 'sugerida';
             const isManual = p.estado === 'manual';
 
-            // Card border classes
             let cardClass = 'border-l-slate-300';
             let badgeClass = 'bg-slate-100 text-slate-500';
             let badgeLabel = 'SIN ASIGNAR';
@@ -394,27 +365,20 @@ export default function Conciliacion({
             const esBN = esAbonoDetraccionBN(p);
             const esNoOperativo = p.facturas?.[0]?.factura === 'NO_OPERATIVO';
 
-            // --- LÓGICA PREDICTIVA (FRANCOTIRADOR + MODO FLEXIBLE) ---
             const CUOTAS_ESTANDAR = [1980, 1270, 910, 530, 500, 410, 860];
             const esPagoEstandar = CUOTAS_ESTANDAR.includes(p.monto);
 
-            // Filter valid invoices for dropdown — FIX #8: ya no se ordena aquí,
-            // se parte de las listas precalculadas (facturasPENOrdenadas / facturasUSDOrdenadas)
-            // y solo se aplica el filtro liviano de "pago estándar" que sí depende de esta fila.
             let baseFacturas = pMoneda === 'PEN' ? facturasPENOrdenadas : facturasUSDOrdenadas;
             if (esBN && pMoneda === 'PEN' && facturasUSDExcepcionDetraccion.length) {
-              // Excepción rara (detracción BN): mezclar y reordenar solo en este caso puntual.
               baseFacturas = [...baseFacturas, ...facturasUSDExcepcionDetraccion].sort(comparadorFactura);
             }
             const facturasOpciones = baseFacturas.filter(f => {
-              // MODO FLEXIBLE: Si verTodas es falso y el pago es estándar, filtramos exactos.
               if (!verTodas && esPagoEstandar && f.saldo !== p.monto) {
                 return false;
               }
               return true;
             });
 
-            // Find selected invoice in state for detracción warning
             const facturaElegida = p.facturas?.length > 0 
               ? facturasPorNumero.get(p.facturas[0].factura)
               : undefined;
