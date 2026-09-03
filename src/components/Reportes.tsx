@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Calendar, Filter } from 'lucide-react';
 
 interface ReportesProps {
   facturas: any[];
@@ -9,6 +9,14 @@ interface ReportesProps {
 }
 
 const MESES_CORTOS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const MESES_OPCIONES = [
+  { value: '01', label: 'Enero' }, { value: '02', label: 'Febrero' },
+  { value: '03', label: 'Marzo' }, { value: '04', label: 'Abril' },
+  { value: '05', label: 'Mayo' }, { value: '06', label: 'Junio' },
+  { value: '07', label: 'Julio' }, { value: '08', label: 'Agosto' },
+  { value: '09', label: 'Septiembre' }, { value: '10', label: 'Octubre' },
+  { value: '11', label: 'Noviembre' }, { value: '12', label: 'Diciembre' }
+];
 
 function mesKeyYLabel(fechaStr: string | null | undefined): { key: string; label: string; orden: number } | null {
   if (!fechaStr) return null;
@@ -24,6 +32,45 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
   const [busca, setBusca] = useState('');
   const [baseFecha, setBaseFecha] = useState<'cobro' | 'emision'>('cobro');
   const [nivel, setNivel] = useState<'tesoreria' | 'producto'>('tesoreria');
+  
+  // FILTROS DE PERIODO
+  const [filtroAnio, setFiltroAnio] = useState<string>('todos');
+  const [filtroMes, setFiltroMes] = useState<string>('todos');
+
+  // Extraer Años Disponibles automáticamente de la Base de Datos
+  const aniosDisponibles = useMemo(() => {
+    const anios = new Set<string>();
+    datosComerciales.forEach((d: any) => {
+      if (d.fecha_doc && d.fecha_doc.length >= 4) anios.add(d.fecha_doc.substring(0, 4));
+    });
+    abonos.forEach((a: any) => {
+      if (a.fecha && a.fecha.length >= 4) anios.add(a.fecha.substring(0, 4));
+    });
+    return Array.from(anios).sort().reverse();
+  }, [datosComerciales, abonos]);
+
+  // Aplicar Filtros Globales (SEPARAMOS EMISIÓN DE COBRO)
+  const datosComercialesFiltrados = useMemo(() => {
+    return datosComerciales.filter((row: any) => {
+      if (!row.fecha_doc) return false;
+      const anio = row.fecha_doc.substring(0, 4);
+      const mes = row.fecha_doc.substring(5, 7);
+      if (filtroAnio !== 'todos' && anio !== filtroAnio) return false;
+      if (filtroMes !== 'todos' && mes !== filtroMes) return false;
+      return true;
+    });
+  }, [datosComerciales, filtroAnio, filtroMes]);
+
+  const abonosFiltrados = useMemo(() => {
+    return abonos.filter((a: any) => {
+      if (!a.fecha) return false;
+      const anio = a.fecha.substring(0, 4);
+      const mes = a.fecha.substring(5, 7);
+      if (filtroAnio !== 'todos' && anio !== filtroAnio) return false;
+      if (filtroMes !== 'todos' && mes !== filtroMes) return false;
+      return true;
+    });
+  }, [abonos, filtroAnio, filtroMes]);
 
   const facturasPorNumero = useMemo(
     () => new Map(facturas.map((f: any) => [f.factura, f])),
@@ -42,6 +89,7 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
     return map;
   }, [catalogoComercial]);
 
+  // El total histórico comercial no se filtra para no romper proporciones
   const totalComercialPorFactura = useMemo(() => {
     const map = new Map<string, number>();
     datosComerciales.forEach((row: any) => {
@@ -52,7 +100,6 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
     return map;
   }, [datosComerciales]);
 
-  // Resolvedor con búsqueda exacta y fallback por código/prefijo
   const resolverCatalogo = (codProd: string, descProd: string) => {
     const prodCode = codProd ? String(codProd).trim() : '';
     const prodDesc = descProd ? String(descProd).trim() : '';
@@ -76,17 +123,25 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
     };
   };
 
+  // MAGIA MATEMÁTICA DESACOPLADA
   const resumen = useMemo(() => {
     const agrupado: Record<string, Record<string, { facturado: number; cobrado: number; porCobrar: number }>> = {};
     const subtotalesRubro: Record<string, { facturado: number; cobrado: number; porCobrar: number }> = {};
     let granTotalFact = 0, granTotalCob = 0, granTotalCxC = 0;
 
-    datosComerciales.forEach((row: any) => {
+    const initGroup = (rubro: string, grupo: string) => {
+      if (!agrupado[rubro]) { agrupado[rubro] = {}; subtotalesRubro[rubro] = { facturado: 0, cobrado: 0, porCobrar: 0 }; }
+      if (!agrupado[rubro][grupo]) agrupado[rubro][grupo] = { facturado: 0, cobrado: 0, porCobrar: 0 };
+    };
+
+    // 1. FACTURADO y CxC (Dependen estrictamente del mes de emisión de la factura)
+    datosComercialesFiltrados.forEach((row: any) => {
       const idFact = row.factura;
       if (!idFact) return;
 
       const { productoLabel, tesoreria, rubro } = resolverCatalogo(row.cod_prod, row.desc_prod);
       const grupo = nivel === 'tesoreria' ? tesoreria : productoLabel;
+      initGroup(rubro, grupo);
 
       const lineaTotal = Number(row.total || 0);
       const facturaTotalComercial = totalComercialPorFactura.get(idFact) || lineaTotal;
@@ -98,24 +153,57 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
         cxcLinea = (lineaTotal / facturaTotalComercial) * saldoTotalFactura;
       }
       cxcLinea = Math.min(cxcLinea, lineaTotal);
-      const cobradoLinea = lineaTotal - cxcLinea;
-
-      if (!agrupado[rubro]) { agrupado[rubro] = {}; subtotalesRubro[rubro] = { facturado: 0, cobrado: 0, porCobrar: 0 }; }
-      if (!agrupado[rubro][grupo]) agrupado[rubro][grupo] = { facturado: 0, cobrado: 0, porCobrar: 0 };
 
       agrupado[rubro][grupo].facturado += lineaTotal;
-      agrupado[rubro][grupo].cobrado += cobradoLinea;
       agrupado[rubro][grupo].porCobrar += cxcLinea;
       subtotalesRubro[rubro].facturado += lineaTotal;
-      subtotalesRubro[rubro].cobrado += cobradoLinea;
       subtotalesRubro[rubro].porCobrar += cxcLinea;
       granTotalFact += lineaTotal;
-      granTotalCob += cobradoLinea;
       granTotalCxC += cxcLinea;
     });
 
+    // 2. COBRADO (Depende estrictamente del mes en que entró el dinero al banco)
+    abonosFiltrados.forEach((abono: any) => {
+      if (abono.estado !== 'confirmado' || !Array.isArray(abono.facturas)) return;
+
+      abono.facturas.forEach((f: any) => {
+        const idFact = f.factura;
+        const importeCobrado = Number(f.importe_factura || 0);
+        // Omitimos NO_OPERATIVO porque esto es reporte netamente comercial
+        if (!idFact || idFact === 'NO_OPERATIVO' || importeCobrado <= 0) return;
+
+        // Buscamos la factura en TODOS los datos comerciales (históricos)
+        const lineasComerciales = datosComerciales.filter((r: any) => r.factura === idFact);
+        const facturaTotalComercial = totalComercialPorFactura.get(idFact) || 0;
+
+        if (lineasComerciales.length === 0 || facturaTotalComercial <= 0) {
+          const r = 'Sin Rubro Asignado';
+          const g = 'Sin Producto Especificado';
+          initGroup(r, g);
+          agrupado[r][g].cobrado += importeCobrado;
+          subtotalesRubro[r].cobrado += importeCobrado;
+          granTotalCob += importeCobrado;
+          return;
+        }
+
+        // Prorrateamos el dinero que entró al banco hacia los rubros comerciales
+        lineasComerciales.forEach((row: any) => {
+          const { productoLabel, tesoreria, rubro } = resolverCatalogo(row.cod_prod, row.desc_prod);
+          const grupo = nivel === 'tesoreria' ? tesoreria : productoLabel;
+          initGroup(rubro, grupo);
+
+          const proporcion = Number(row.total || 0) / facturaTotalComercial;
+          const cobradoLinea = importeCobrado * proporcion;
+
+          agrupado[rubro][grupo].cobrado += cobradoLinea;
+          subtotalesRubro[rubro].cobrado += cobradoLinea;
+          granTotalCob += cobradoLinea;
+        });
+      });
+    });
+
     return { agrupado, subtotalesRubro, granTotalFact, granTotalCob, granTotalCxC };
-  }, [datosComerciales, catalogoPorProducto, totalComercialPorFactura, facturasPorNumero, nivel]);
+  }, [datosComercialesFiltrados, abonosFiltrados, datosComerciales, catalogoPorProducto, totalComercialPorFactura, facturasPorNumero, nivel]);
 
   const pivote = useMemo(() => {
     const agrupado: Record<string, Record<string, Record<string, number>>> = {};
@@ -138,7 +226,7 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
     };
 
     if (baseFecha === 'cobro') {
-      abonos.forEach((p: any) => {
+      abonosFiltrados.forEach((p: any) => {
         if (p.estado !== 'confirmado' || !Array.isArray(p.facturas)) return;
         const m = mesKeyYLabel(p.fecha);
         if (!m) return;
@@ -146,7 +234,7 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
         p.facturas.forEach((linea: any) => {
           const idFact = linea.factura;
           const importeFactura = Number(linea.importe_factura || 0);
-          if (!idFact || !importeFactura) return;
+          if (!idFact || idFact === 'NO_OPERATIVO' || importeFactura <= 0) return;
 
           const lineasComerciales = datosComerciales.filter((r: any) => r.factura === idFact);
           const facturaTotalComercial = totalComercialPorFactura.get(idFact) || 0;
@@ -165,7 +253,7 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
         });
       });
     } else {
-      datosComerciales.forEach((row: any) => {
+      datosComercialesFiltrados.forEach((row: any) => {
         const idFact = row.factura;
         if (!idFact) return;
         const m = mesKeyYLabel(row.fecha_doc);
@@ -191,7 +279,7 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
     const mesesOrdenados = [...mesesSet.entries()].sort((a, b) => a[1].orden - b[1].orden).map(([key, v]) => ({ key, label: v.label }));
 
     return { agrupado, totalesGrupo, totalesRubro, mesesOrdenados, granTotal };
-  }, [baseFecha, nivel, abonos, datosComerciales, catalogoPorProducto, totalComercialPorFactura, facturasPorNumero]);
+  }, [baseFecha, nivel, abonosFiltrados, datosComercialesFiltrados, datosComerciales, catalogoPorProducto, totalComercialPorFactura, facturasPorNumero]);
 
   const fmtComas = (num: number) => Math.round(num).toLocaleString('en-US');
 
@@ -205,42 +293,82 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
 
   return (
     <div className="space-y-6 font-sans">
+      {/* TARJETAS PRINCIPALES */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm border-t-4 border-t-blue-500">
-          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Facturado (Comercial)</div>
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Facturado (Emitido)</div>
           <div className="text-2xl font-black text-slate-800">S/ {fmtComas(resumen.granTotalFact)}</div>
+          <div className="text-[10px] text-slate-400 mt-1 font-mono">Facturas emitidas en el periodo</div>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm border-t-4 border-t-emerald-500">
-          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Cobrado (estimado, saldo actual)</div>
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Cobrado (En Bancos)</div>
           <div className="text-2xl font-black text-emerald-600">S/ {fmtComas(resumen.granTotalCob)}</div>
+          <div className="text-[10px] text-emerald-600/70 mt-1 font-mono font-medium">Dinero ingresado en el periodo</div>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm border-t-4 border-t-red-500">
-          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Cuentas por Cobrar (Saldo)</div>
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Cuentas por Cobrar</div>
           <div className="text-2xl font-black text-red-600">S/ {fmtComas(resumen.granTotalCxC)}</div>
+          <div className="text-[10px] text-slate-400 mt-1 font-mono">Saldo pendiente de emisiones del periodo</div>
         </div>
       </div>
 
-      <div className="bg-white shadow-sm border border-slate-300 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-bold text-slate-500 uppercase mr-1">Ver por:</span>
-          <button onClick={() => setNivel('tesoreria')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg border ${nivel === 'tesoreria' ? 'bg-[#b90000] text-white border-[#b90000]' : 'bg-white text-slate-600 border-slate-200'}`}>Tesorería</button>
-          <button onClick={() => setNivel('producto')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg border ${nivel === 'producto' ? 'bg-[#b90000] text-white border-[#b90000]' : 'bg-white text-slate-600 border-slate-200'}`}>Producto</button>
+      <div className="bg-white shadow-sm border border-slate-300 rounded-xl p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        
+        {/* BARRA DE HERRAMIENTAS Y FILTROS */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 mr-4">
+            <Filter className="w-4 h-4 text-slate-400" />
+            <span className="text-xs font-bold text-slate-500 uppercase">Ver por:</span>
+            <button onClick={() => setNivel('tesoreria')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${nivel === 'tesoreria' ? 'bg-[#b90000] text-white border-[#b90000]' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>Tesorería</button>
+            <button onClick={() => setNivel('producto')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${nivel === 'producto' ? 'bg-[#b90000] text-white border-[#b90000]' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>Producto</button>
+          </div>
+
+          <div className="w-px h-6 bg-slate-200 hidden sm:block mx-1"></div>
+
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-[#b90000]" />
+            <span className="text-xs font-bold text-slate-500 uppercase">Año:</span>
+            <select
+              value={filtroAnio}
+              onChange={(e) => setFiltroAnio(e.target.value)}
+              className="px-3 py-1.5 bg-red-50 border border-[#b90000]/30 text-[#b90000] rounded-lg text-xs font-bold focus:outline-none focus:border-[#b90000] cursor-pointer"
+            >
+              <option value="todos">Todos los años</option>
+              {aniosDisponibles.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2 ml-2">
+            <span className="text-xs font-bold text-slate-500 uppercase">Mes:</span>
+            <select
+              value={filtroMes}
+              onChange={(e) => setFiltroMes(e.target.value)}
+              className="px-3 py-1.5 bg-red-50 border border-[#b90000]/30 text-[#b90000] rounded-lg text-xs font-bold focus:outline-none focus:border-[#b90000] cursor-pointer"
+            >
+              <option value="todos">Todos los meses</option>
+              {MESES_OPCIONES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </div>
         </div>
-        <div className="relative">
+
+        <div className="relative w-full xl:w-auto">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
             type="text"
             placeholder="Buscar rubro..."
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
-            className="pl-9 pr-4 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium w-full sm:w-64 focus:outline-none focus:border-capeco-blue"
+            className="pl-9 pr-4 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium w-full xl:w-64 focus:outline-none focus:border-[#b90000]"
           />
         </div>
       </div>
 
       <div className="bg-white shadow-sm border border-slate-300 rounded-xl overflow-hidden">
-        <div className="p-4 bg-slate-50 border-b border-slate-300">
+        <div className="p-4 bg-slate-50 border-b border-slate-300 flex justify-between items-center">
           <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Resumen por Rubro y {nivel === 'tesoreria' ? 'Tesorería' : 'Producto'}</h2>
+          {(filtroAnio !== 'todos' || filtroMes !== 'todos') && (
+            <span className="text-[10px] font-bold text-[#b90000] bg-red-100 px-2 py-1 rounded-md">FILTRADO</span>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-right text-xs border-collapse">
@@ -254,7 +382,7 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
             </thead>
             <tbody>
               {rubrosResumen.length === 0 ? (
-                <tr><td colSpan={4} className="py-8 text-center text-slate-400 font-medium">No se encontraron datos para mostrar.</td></tr>
+                <tr><td colSpan={4} className="py-8 text-center text-slate-400 font-medium">No se encontraron datos para mostrar en este periodo.</td></tr>
               ) : (
                 rubrosResumen.map(rubro => {
                   const grupos = resumen.agrupado[rubro];
@@ -288,11 +416,11 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
 
       <div className="bg-white shadow-sm border border-slate-300 rounded-xl overflow-hidden">
         <div className="p-4 bg-slate-50 border-b border-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Cobranzas por Rubro y {nivel === 'tesoreria' ? 'Tesorería' : 'Producto'}</h2>
+          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Evolución de Cobranzas por {nivel === 'tesoreria' ? 'Tesorería' : 'Producto'}</h2>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">Fecha base:</span>
-            <button onClick={() => setBaseFecha('cobro')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg border ${baseFecha === 'cobro' ? 'bg-[#b90000] text-white border-[#b90000]' : 'bg-white text-slate-600 border-slate-200'}`}>Cobro confirmado</button>
-            <button onClick={() => setBaseFecha('emision')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg border ${baseFecha === 'emision' ? 'bg-[#b90000] text-white border-[#b90000]' : 'bg-white text-slate-600 border-slate-200'}`}>Emisión</button>
+            <span className="text-xs font-bold text-slate-500 uppercase mr-1">Base temporal:</span>
+            <button onClick={() => setBaseFecha('cobro')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${baseFecha === 'cobro' ? 'bg-[#b90000] text-white border-[#b90000]' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>Cobro en Banco</button>
+            <button onClick={() => setBaseFecha('emision')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${baseFecha === 'emision' ? 'bg-[#b90000] text-white border-[#b90000]' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>Emisión Factura</button>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -303,12 +431,12 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
                 {pivote.mesesOrdenados.map(m => (
                   <th key={m.key} className="py-2.5 px-4 font-bold border-b border-[#990000] whitespace-nowrap">{m.label}</th>
                 ))}
-                <th className="py-2.5 px-4 font-bold border-b border-[#990000] bg-[#990000] whitespace-nowrap">Total general</th>
+                <th className="py-2.5 px-4 font-bold border-b border-[#990000] bg-[#990000] whitespace-nowrap">Total periodo</th>
               </tr>
             </thead>
             <tbody>
               {rubrosPivote.length === 0 ? (
-                <tr><td colSpan={pivote.mesesOrdenados.length + 2} className="py-8 text-center text-slate-400 font-medium">No se encontraron datos para mostrar.</td></tr>
+                <tr><td colSpan={pivote.mesesOrdenados.length + 2} className="py-8 text-center text-slate-400 font-medium">No se encontraron datos para mostrar en este periodo.</td></tr>
               ) : (
                 rubrosPivote.map(rubro => {
                   const grupos = pivote.agrupado[rubro];
@@ -316,22 +444,22 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
                     <React.Fragment key={rubro}>
                       {Object.keys(grupos).sort((a, b) => a.localeCompare(b)).map(grupo => (
                         <tr key={grupo} className="hover:bg-slate-50 transition-colors border-b border-slate-100">
-                          <td className="py-1.5 px-4 text-left text-slate-600 sticky left-0 bg-white">{grupo}</td>
+                          <td className="py-1.5 px-4 text-left text-slate-600 sticky left-0 bg-white shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">{grupo}</td>
                           {pivote.mesesOrdenados.map(m => (
                             <td key={m.key} className="py-1.5 px-4 text-slate-700">
                               {grupos[grupo][m.key] ? fmtComas(grupos[grupo][m.key]) : ''}
                             </td>
                           ))}
-                          <td className="py-1.5 px-4 font-bold text-slate-800">{fmtComas(pivote.totalesGrupo[rubro][grupo])}</td>
+                          <td className="py-1.5 px-4 font-bold text-slate-800 bg-slate-50/50">{fmtComas(pivote.totalesGrupo[rubro][grupo])}</td>
                         </tr>
                       ))}
                       <tr className="bg-slate-200 border-y border-slate-300">
-                        <td className="py-2 px-4 text-left font-black text-slate-800 uppercase sticky left-0 bg-slate-200">Total {rubro}</td>
+                        <td className="py-2 px-4 text-left font-black text-slate-800 uppercase sticky left-0 bg-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Total {rubro}</td>
                         {pivote.mesesOrdenados.map(m => {
                           const totalMes = Object.values(grupos).reduce((acc: number, g: any) => acc + (g[m.key] || 0), 0);
                           return <td key={m.key} className="py-2 px-4 font-bold text-slate-800">{totalMes ? fmtComas(totalMes) : ''}</td>;
                         })}
-                        <td className="py-2 px-4 font-bold text-slate-800">{fmtComas(pivote.totalesRubro[rubro])}</td>
+                        <td className="py-2 px-4 font-bold text-slate-800 bg-slate-200/50">{fmtComas(pivote.totalesRubro[rubro])}</td>
                       </tr>
                     </React.Fragment>
                   );
@@ -340,13 +468,13 @@ export default function Reportes({ facturas = [], abonos = [], datosComerciales 
             </tbody>
             {rubrosPivote.length > 0 && (
               <tfoot>
-                <tr className="bg-[#b90000] text-white">
-                  <td className="py-2 px-4 text-left font-black uppercase sticky left-0 bg-[#b90000]">Total general</td>
+                <tr className="bg-[#b90000] text-white shadow-inner">
+                  <td className="py-2.5 px-4 text-left font-black uppercase sticky left-0 bg-[#b90000] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.3)]">Total general</td>
                   {pivote.mesesOrdenados.map(m => {
                     const totalMes = rubrosPivote.reduce((acc, rubro) => acc + Object.values(pivote.agrupado[rubro]).reduce((a: number, g: any) => a + (g[m.key] || 0), 0), 0);
-                    return <td key={m.key} className="py-2 px-4 font-bold">{totalMes ? fmtComas(totalMes) : ''}</td>;
+                    return <td key={m.key} className="py-2.5 px-4 font-bold">{totalMes ? fmtComas(totalMes) : ''}</td>;
                   })}
-                  <td className="py-2 px-4 font-bold bg-[#990000]">{fmtComas(pivote.granTotal)}</td>
+                  <td className="py-2.5 px-4 font-bold bg-[#990000]">{fmtComas(pivote.granTotal)}</td>
                 </tr>
               </tfoot>
             )}
