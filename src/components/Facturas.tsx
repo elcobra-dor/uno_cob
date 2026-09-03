@@ -1,14 +1,15 @@
 import React, { useState, useMemo } from 'react';
 import { Factura } from '../types';
 import { fmtMonto, diasHasta, norm } from '../lib/businessUtils';
-import { Search, AlertTriangle, Clock, FileText, Coins, Printer } from 'lucide-react';
+import { Search, AlertTriangle, Clock, Coins, Printer, FileText, Send } from 'lucide-react';
 
 interface FacturasProps {
   facturas: Factura[];
+  onIrACobranzas?: (cliente?: string) => void;
   onAjusteRedondeo?: (facturaId: string, saldo: number, moneda: string) => void;
 }
 
-export default function Facturas({ facturas, onAjusteRedondeo }: FacturasProps) {
+export default function Facturas({ facturas, onIrACobranzas, onAjusteRedondeo }: FacturasProps) {
   const [filtroVencimiento, setFiltroVencimiento] = useState<'todos' | 'vencida' | 'proxima' | 'ok'>('todos');
   const [busca, setBusca] = useState('');
 
@@ -283,14 +284,25 @@ export default function Facturas({ facturas, onAjusteRedondeo }: FacturasProps) 
           </div>
         </div>
 
-        <button
-          onClick={handleExportarEstadoCuentaPDF}
-          className="bg-red-50 text-capeco-red border border-red-150 rounded-xl px-4 py-2.5 text-xs font-semibold hover:bg-capeco-red hover:text-white transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-sm md:self-end"
-          title="Filtra a un cliente en el buscador y descarga su PDF de facturas pendientes con logo CAPECO"
-        >
-          <Printer className="w-4 h-4" />
-          Estado de Cuenta PDF
-        </button>
+        <div className="flex flex-wrap items-center gap-2 md:self-end">
+          <button
+            onClick={() => onIrACobranzas && onIrACobranzas(busca)}
+            className="bg-[#7A1B29] text-white rounded-xl px-4 py-2.5 text-xs font-semibold hover:bg-[#8f2131] transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+            title="Ir al módulo de cobranzas y generar recordatorios de facturas vencidas por email"
+          >
+            <Send className="w-4 h-4" />
+            Cobranzas & Email
+          </button>
+
+          <button
+            onClick={handleExportarEstadoCuentaPDF}
+            className="bg-red-50 text-capeco-red border border-red-150 rounded-xl px-4 py-2.5 text-xs font-semibold hover:bg-capeco-red hover:text-white transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+            title="Filtra a un cliente en el buscador y descarga su PDF de facturas pendientes con logo CAPECO"
+          >
+            <Printer className="w-4 h-4" />
+            Estado de Cuenta PDF
+          </button>
+        </div>
       </div>
 
       {/* Invoices List Table */}
@@ -305,12 +317,13 @@ export default function Facturas({ facturas, onAjusteRedondeo }: FacturasProps) 
                 <th className="px-6 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">Fechas</th>
                 <th className="px-6 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">Vencimiento</th>
                 <th className="px-6 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono text-right">Saldo Pendiente</th>
+                <th className="px-4 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono text-center">Aviso</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {facturasFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
                     <div className="flex flex-col items-center justify-center">
                       <FileText className="w-10 h-10 text-slate-200 mb-2" />
                       <div className="text-sm font-semibold text-slate-700">No hay facturas pendientes</div>
@@ -367,7 +380,7 @@ export default function Facturas({ facturas, onAjusteRedondeo }: FacturasProps) 
                           {vencimientoLabel}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right font-mono text-sm font-bold text-slate-900 flex justify-end items-center gap-3">
+                      <td className="px-6 py-4 whitespace-nowrap text-right font-mono text-sm font-bold text-slate-900 flex justify-end items-center gap-2">
                         {permiteAjuste && (
                           <button
                             onClick={() => onAjusteRedondeo!(f.factura, f.saldo, f.moneda)}
@@ -378,6 +391,15 @@ export default function Facturas({ facturas, onAjusteRedondeo }: FacturasProps) 
                           </button>
                         )}
                         <span>{fmtMonto(f.saldo, f.moneda)}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap text-center">
+                        <button
+                          onClick={() => onIrACobranzas && onIrACobranzas(f.razon_social)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-[#7A1B29] hover:bg-rose-50 transition-colors cursor-pointer"
+                          title={`Gestionar recordatorio de cobranza por email para ${f.razon_social}`}
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                        </button>
                       </td>
                     </tr>
                   );
