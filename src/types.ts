@@ -71,8 +71,45 @@ export interface Categoria {
 }
 
 // ----------------------------------------------------------------------
-// Culqi (conciliación separada de la del banco — ver ConciliacionCulqi.tsx)
+// Cobranzas y Recordatorios de Facturas Vencidas
 // ----------------------------------------------------------------------
+
+export type NivelMora = 'preventivo' | 'leve' | 'medio' | 'critico';
+
+export interface ClienteCobranza {
+  ruc: string;
+  razon_social: string;
+  correo: string;
+  correo_secundario?: string;
+  contacto_nombre?: string;
+  telefono?: string;
+  facturas: Factura[];
+  totalPEN: number;
+  totalUSD: number;
+  diasMaxAtraso: number;
+  nivelMora: NivelMora;
+  ultimoRecordatorio?: string; // ISO date
+  totalRecordatoriosEnviados: number;
+}
+
+export interface RecordatorioEnvio {
+  id: string;
+  ruc: string;
+  razon_social: string;
+  destinatario: string;
+  correo_secundario?: string;
+  asunto: string;
+  cuerpoHtml: string;
+  cuerpoTexto: string;
+  facturas: string[]; // lista de nros de factura
+  montoPEN: number;
+  montoUSD: number;
+  nivelMora: NivelMora;
+  fechaEnvio: string; // ISO string
+  estado: 'enviado' | 'pendiente' | 'error';
+  metodo: 'automatico' | 'manual' | 'mailto';
+}
+
 
 export interface VentaCulqi {
   id_transaccion: string;
