@@ -82,7 +82,6 @@ export default function App() {
     }, 3500);
   }, []);
 
-  // 1. Session Checker
   useEffect(() => {
     const checkSession = async () => {
       try {
@@ -118,7 +117,6 @@ export default function App() {
     };
   }, []);
 
-  // 2. Load Core Data from Supabase
   const cargarDesdeBD = useCallback(async () => {
     if (!userAuthenticated) return;
     setLoadingData(true);
@@ -158,6 +156,18 @@ export default function App() {
 
       const facturasConSaldos = facturasCargadas.map(f => ({ ...f }));
       const facturasPorNumeroLocal = new Map(facturasConSaldos.map(f => [f.factura, f]));
+
+      // ⚡ REGLA DE ORO DE LOS AJUSTES: El saldo de la factura se descuenta 
+      // globalmente desde la tabla de conciliaciones. Así los ajustes no necesitan
+      // existir en el banco para matar la deuda.
+      (cdata || []).forEach((c: any) => {
+        if (c.factura && c.factura !== 'NO_OPERATIVO') {
+          const f = facturasPorNumeroLocal.get(c.factura);
+          if (f) {
+            f.saldo -= (parseFloat(c.importe_factura) || 0);
+          }
+        }
+      });
 
       const initialAbonos: Abono[] = [];
       let idCounter = 1;
@@ -204,15 +214,6 @@ export default function App() {
                 confianza: ''
             });
         }
-        
-        concItems.forEach((c: any) => {
-           if (c.factura !== 'NO_OPERATIVO') {
-              const f = facturasPorNumeroLocal.get(c.factura);
-              if (f) {
-                 f.saldo -= c.importe_factura;
-              }
-           }
-        });
       });
 
       facturasConSaldos.forEach(f => {
@@ -498,6 +499,34 @@ export default function App() {
     }
   };
 
+  // BOTÓN DE AJUSTE MÁGICO (Sin tocar el banco)
+  const handleAjusteRedondeo = async (facturaId: string, saldo: number, moneda: string) => {
+    if (!confirm(`¿Liquidar el saldo de ${moneda === 'USD' ? 'US$' : 'S/'} ${saldo} de la factura ${facturaId} por ajuste de redondeo?`)) return;
+    
+    try {
+      // SOLO inyectamos el cruce directo en conciliaciones para engañar a la factura.
+      // Así mantenemos 100% puro el registro real del banco.
+      const opAjuste = `AJUSTE-${facturaId.replace(/[^A-Za-z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
+      
+      const { error: errConc } = await supabase.from('conciliaciones').insert([{
+        operacion: opAjuste,
+        factura: facturaId,
+        razon: 'Ajuste contable por redondeo / detracción',
+        importe_factura: saldo,
+        estado: 'confirmado',
+        motivo: 'Ajuste Manual de Céntimos',
+        confianza: 'alta'
+      }]);
+      
+      if (errConc) throw errConc;
+
+      showToast(`Factura ${facturaId} liquidada al 100% ✓`, 'green');
+      await cargarDesdeBD();
+    } catch (err: any) {
+      alert(`Error al aplicar el ajuste: ${err.message}`);
+    }
+  };
+
   const handleQuitar = async (id: number) => {
     const p = abonos.find(x => x.id === id);
     if (!p) return;
@@ -587,42 +616,6 @@ export default function App() {
     }));
   };
 
-  const handleAjusteRedondeo = async (facturaId: string, saldo: number, moneda: string) => {
-    if (!confirm(`¿Liquidar el saldo de ${moneda === 'USD' ? 'US$' : 'S/'} ${saldo} de la factura ${facturaId} por ajuste de redondeo?`)) return;
-    
-    try {
-      // 1. Creamos un abono virtual de ajuste
-      const opAjuste = `AJUSTE-${facturaId.replace(/[^A-Za-z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
-      
-      const { error: errAbono } = await supabase.from('abonos').insert([{
-        operacion: opAjuste,
-        fecha: new Date().toISOString().slice(0, 10),
-        descripcion: `Ajuste por Redondeo / Céntimos - Factura ${facturaId}`,
-        monto: saldo,
-        moneda: moneda,
-        estado: 'confirmado',
-        cuenta: 'AJUSTE-REDONDEO'
-      }]);
-      if (errAbono) throw errAbono;
-
-      // 2. Lo cruzamos con la factura para matarla al 100%
-      const { error: errConc } = await supabase.from('conciliaciones').insert([{
-        operacion: opAjuste,
-        factura: facturaId,
-        razon: 'Ajuste contable por redondeo',
-        importe_factura: saldo,
-        estado: 'confirmado',
-        motivo: 'Ajuste Manual',
-        confianza: 'alta'
-      }]);
-      if (errConc) throw errConc;
-
-      showToast(`Factura ${facturaId} liquidada al 100% ✓`, 'green');
-      await cargarDesdeBD();
-    } catch (err: any) {
-      alert(`Error al aplicar el ajuste: ${err.message}`);
-    }
-  };
   const handleQuitarLinea = (id: number, idx: number) => {
     setAbonos(prev => prev.map(p => {
       if (p.id === id) {
