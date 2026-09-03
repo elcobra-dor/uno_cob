@@ -382,39 +382,60 @@ export default function App() {
         .in('id_transaccion', ids);
       if (errUpdate) throw errUpdate;
 
-      // Si el lote tiene un depósito bancario identificado, lo cerramos en automático
       if (candidato.abonoBanco) {
-        // 1. Etiquetamos el depósito con el código del lote
         await supabase
           .from('abonos')
           .update({ referencia2: correlativo })
           .eq('operacion', String(candidato.abonoBanco.operacion));
 
-        // 2. ¡LA MAGIA AQUÍ! Auto-conciliamos el banco real contra todas las facturas del lote
+        // 1. MATAR LA FACTURA AL 100% (Monto Bruto)
         const conciliacionesBanco = candidato.ventas
-          .filter(v => v.factura) // Solo pasamos las que tienen factura asignada
+          .filter(v => v.factura)
           .map(v => ({
             operacion: String(candidato.abonoBanco!.operacion),
             factura: v.factura,
             razon: v.razon || '',
-            // Aplicamos el monto NETO porque eso es lo que realmente entró al banco
-            importe_factura: v.monto_abono, 
+            importe_factura: v.venta_final, // <-- MAGIA: 100% del importe bruto
             estado: 'confirmado',
-            motivo: `Auto-Liquidado por Lote ${correlativo}`,
+            motivo: `Liquidado (Neto + Comisión) por Lote ${correlativo}`,
             confianza: 'alta'
           }));
 
-        // Insertamos el cruce directo en el módulo bancario
         if (conciliacionesBanco.length > 0) {
           const { error: errConc } = await supabase
             .from('conciliaciones')
             .upsert(conciliacionesBanco, { onConflict: 'operacion,factura' });
-          
           if (errConc) throw errConc;
+        }
+
+        // 2. REGISTRAR LA COMISIÓN AUTOMÁTICAMENTE EN EGRESOS
+        const egresosComision = candidato.ventas
+          .filter(v => v.comision_total > 0)
+          .map(v => {
+            // Creamos una OP única para no chocar con el banco real
+            const sufijo = v.id_transaccion.substring(v.id_transaccion.length - 4);
+            return {
+              operacion: `${candidato.abonoBanco!.operacion}-COM-${sufijo}`, 
+              fecha: candidato.abonoBanco!.fecha,
+              descripcion: `Comisión Pasarela Culqi - Venta ${v.id_transaccion}`,
+              referencia2: correlativo,
+              moneda: candidato.abonoBanco!.moneda,
+              monto: v.comision_total,
+              cuenta: '',
+              saldo: 0,
+              estado: 'pendiente' // Nace pendiente para que luego le asignes la categoría en tu módulo de Egresos
+            };
+          });
+
+        if (egresosComision.length > 0) {
+          const { error: errEgresos } = await supabase
+            .from('egresos')
+            .upsert(egresosComision, { onConflict: 'operacion,fecha,monto,cuenta,saldo' });
+          if (errEgresos) console.error("Error al registrar comisión", errEgresos);
         }
       }
 
-      showToast(`Lote ${correlativo} creado y auto-conciliado ✓`, 'green');
+      showToast(`Lote ${correlativo} creado: Facturas canceladas al 100% ✓`, 'green');
       await cargarDesdeBD();
     } catch (err: any) {
       alert(`Error al crear el lote: ${err.message}`);
