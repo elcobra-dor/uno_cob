@@ -1676,7 +1676,10 @@ export default function App() {
               )}
 
               {currentPage === 'facturas' && (
-                <Facturas facturas={facturas} />
+                <Facturas 
+                  facturas={facturas} 
+                  onAjusteRedondeo={handleAjusteRedondeo}
+                />
               )}
 
               {currentPage === 'egresos' && (
