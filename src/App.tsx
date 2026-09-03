@@ -1320,7 +1320,8 @@ export default function App() {
     ];
     const rows = [headers];
 
-    abonos.forEach(p => {
+    const listaExportar = currentPage === 'conciliacion' ? abonosFiltradosVista : abonos;
+    listaExportar.forEach(p => {
       const glosaParts = String(p.glosa || '').trim().split(/\s+/);
       const banco = glosaParts[0] ? glosaParts[0].toUpperCase() : '';
       const cuenta = glosaParts[1] ? glosaParts[1] : '';
