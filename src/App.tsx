@@ -1670,6 +1670,7 @@ export default function App() {
                   onQuitarLinea={handleQuitarLinea}
                   onCambiarLinea={handleCambiarLinea}
                   onToggleDetraccion={handleToggleDetraccion}
+                  onFiltroChange={setAbonosFiltradosVista}  // <--- LÍNEA NUEVA
                   stats={statsConciliacion}
                 />
               )}
