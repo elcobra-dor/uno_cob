@@ -1,13 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { Factura } from '../types';
 import { fmtMonto, diasHasta, norm } from '../lib/businessUtils';
-import { Search, AlertTriangle, Clock, CheckCircle2, Coins, Printer, FileText } from 'lucide-react';
+import { Search, AlertTriangle, Clock, FileText, Coins, Printer } from 'lucide-react';
 
 interface FacturasProps {
   facturas: Factura[];
+  onAjusteRedondeo?: (facturaId: string, saldo: number, moneda: string) => void;
 }
 
-export default function Facturas({ facturas }: FacturasProps) {
+export default function Facturas({ facturas, onAjusteRedondeo }: FacturasProps) {
   const [filtroVencimiento, setFiltroVencimiento] = useState<'todos' | 'vencida' | 'proxima' | 'ok'>('todos');
   const [busca, setBusca] = useState('');
 
@@ -340,6 +341,9 @@ export default function Facturas({ facturas }: FacturasProps) {
                     }
                   }
 
+                  // Lógica para mostrar el botón de ajuste solo si el saldo es pequeño (S/ 5.00 o menos)
+                  const permiteAjuste = onAjusteRedondeo && f.saldo > 0 && f.saldo <= 5;
+
                   return (
                     <tr key={f.factura} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -363,8 +367,17 @@ export default function Facturas({ facturas }: FacturasProps) {
                           {vencimientoLabel}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right font-mono text-sm font-bold text-slate-900">
-                        {fmtMonto(f.saldo, f.moneda)}
+                      <td className="px-6 py-4 whitespace-nowrap text-right font-mono text-sm font-bold text-slate-900 flex justify-end items-center gap-3">
+                        {permiteAjuste && (
+                          <button
+                            onClick={() => onAjusteRedondeo!(f.factura, f.saldo, f.moneda)}
+                            className="bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded shadow-sm hover:bg-red-600 hover:text-white transition-colors cursor-pointer flex items-center gap-1 text-[10px]"
+                            title="Liquidar saldo pendiente como Ajuste por Redondeo (Para céntimos de detracción o tipo de cambio)"
+                          >
+                            🧹 Ajuste
+                          </button>
+                        )}
+                        <span>{fmtMonto(f.saldo, f.moneda)}</span>
                       </td>
                     </tr>
                   );
