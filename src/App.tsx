@@ -118,7 +118,7 @@ export default function App() {
     };
   }, []);
 
-  // 2. Load Core Data from Supabase con fetchAllRows para evitar el límite de 1000
+  // 2. Load Core Data from Supabase
   const cargarDesdeBD = useCallback(async () => {
     if (!userAuthenticated) return;
     setLoadingData(true);
@@ -146,7 +146,6 @@ export default function App() {
 
       const abonosCargados = bdata || [];
 
-      // Mapear conciliaciones a su operación bancaria original
       const concMap: { [key: string]: { factura: string; razon: string; importe_factura: number }[] } = {};
       (cdata || []).forEach((c: any) => {
         if (!concMap[c.operacion]) concMap[c.operacion] = [];
@@ -160,9 +159,6 @@ export default function App() {
       const facturasConSaldos = facturasCargadas.map(f => ({ ...f }));
       const facturasPorNumeroLocal = new Map(facturasConSaldos.map(f => [f.factura, f]));
 
-      // -----------------------------------------------------------------------------------
-      // MAGIA ARQUITECTÓNICA: Fraccionamiento Dinámico (Split Virtual)
-      // -----------------------------------------------------------------------------------
       const initialAbonos: Abono[] = [];
       let idCounter = 1;
 
@@ -170,7 +166,6 @@ export default function App() {
         const concItems = concMap[b.operacion];
         const montoTotal = parseFloat(b.monto) || 0;
 
-        // Si la operación no tiene conciliaciones, entra completa como PENDIENTE
         if (!concItems || concItems.length === 0) {
             initialAbonos.push({
               ...b,
@@ -184,11 +179,9 @@ export default function App() {
             return;
         }
 
-        // Si ya tiene conciliaciones, calculamos el split en vivo
         const sumaConciliada = concItems.reduce((acc: number, c: any) => acc + c.importe_factura, 0);
         const sobrante = Math.round((montoTotal - sumaConciliada) * 100) / 100;
 
-        // 1. Tarjeta Confirmada: Muestra EXACTAMENTE lo que ya se cruzó (ej. 413)
         initialAbonos.push({
             ...b,
             id: idCounter++,
@@ -199,8 +192,6 @@ export default function App() {
             confianza: ''
         });
 
-        // 2. Tarjeta Virtual (Ghost Card): Si quedó vuelto, le generamos una tarjeta pendiente nueva.
-        // OJO: Conserva el "b.operacion" original para que no rompa la base de datos
         if (sobrante > 0.01) {
             initialAbonos.push({
                 ...b,
@@ -214,7 +205,6 @@ export default function App() {
             });
         }
         
-        // 3. Descontar las facturas procesadas de la memoria
         concItems.forEach((c: any) => {
            if (c.factura !== 'NO_OPERATIVO') {
               const f = facturasPorNumeroLocal.get(c.factura);
@@ -246,15 +236,8 @@ export default function App() {
         monto: parseFloat(e.monto) || 0,
       }));
 
-      // ------------------------------------------------------------------
-      // CULQI: tablas 100% separadas del banco. Cruzamos ventas_culqi con
-      // conciliaciones_culqi (venta -> factura) para saber qué venta ya
-      // tiene match y a qué lote pertenece, si ya se agrupó.
-      // ------------------------------------------------------------------
       const concCulqiMap: { [id_transaccion: string]: { factura: string; razon: string; importe_factura: number; lote_culqi: string | null } } = {};
       (ccData || []).forEach((c: any) => {
-        // Si hubiera más de una línea por venta, nos quedamos con la primera
-        // (el flujo actual es 1 venta -> 1 factura).
         if (!concCulqiMap[c.id_transaccion]) {
           concCulqiMap[c.id_transaccion] = {
             factura: c.factura,
@@ -296,6 +279,7 @@ export default function App() {
       setCatalogoComercial(catalogoData || []);
       setVentasCulqi(ventasCulqiCargadas);
       setLotesCulqi(lotesCulqiCargados);
+      
       setDbStatus('connected');
       showToast('Datos sincronizados correctamente', 'green');
     } catch (err: any) {
@@ -313,13 +297,6 @@ export default function App() {
     }
   }, [userAuthenticated, cargarDesdeBD]);
 
-  // ------------------------------------------------------------------------
-  // CULQI — tablas separadas del banco (ventas_culqi / conciliaciones_culqi /
-  // lotes_culqi). Nunca se toca `abonos` salvo para anotar el correlativo en
-  // `referencia2` una vez que se identifica el depósito real (campo libre,
-  // fuera de la clave de deduplicación de extractos).
-  // ------------------------------------------------------------------------
-
   const candidatosLoteCulqi = useMemo(() => {
     const elegibles = ventasCulqi.filter(v => v.estadoMatch === 'confirmado');
     const abonosPendientesBanco = abonos.filter(a => a.estado !== 'confirmado');
@@ -331,8 +308,6 @@ export default function App() {
     if (!venta) return;
 
     try {
-      // Primero se limpia cualquier vínculo previo de esta venta (si el usuario
-      // está cambiando la factura asignada), luego se inserta el nuevo si aplica.
       const { error: errDelete } = await supabase.from('conciliaciones_culqi').delete().eq('id_transaccion', id_transaccion);
       if (errDelete) throw errDelete;
 
@@ -389,14 +364,13 @@ export default function App() {
           .update({ referencia2: correlativo })
           .eq('operacion', String(candidato.abonoBanco.operacion));
 
-        // 1. MATAR LA FACTURA AL 100% (Monto Bruto)
         const conciliacionesBanco = candidato.ventas
           .filter(v => v.factura)
           .map(v => ({
             operacion: String(candidato.abonoBanco!.operacion),
             factura: v.factura,
             razon: v.razon || '',
-            importe_factura: v.venta_final, // <-- MAGIA: 100% del importe bruto
+            importe_factura: v.venta_final,
             estado: 'confirmado',
             motivo: `Liquidado (Neto + Comisión) por Lote ${correlativo}`,
             confianza: 'alta'
@@ -409,11 +383,9 @@ export default function App() {
           if (errConc) throw errConc;
         }
 
-        // 2. REGISTRAR LA COMISIÓN AUTOMÁTICAMENTE EN EGRESOS
         const egresosComision = candidato.ventas
           .filter(v => v.comision_total > 0)
           .map(v => {
-            // Creamos una OP única para no chocar con el banco real
             const sufijo = v.id_transaccion.substring(v.id_transaccion.length - 4);
             return {
               operacion: `${candidato.abonoBanco!.operacion}-COM-${sufijo}`, 
@@ -424,7 +396,7 @@ export default function App() {
               monto: v.comision_total,
               cuenta: '',
               saldo: 0,
-              estado: 'pendiente' // Nace pendiente para que luego le asignes la categoría en tu módulo de Egresos
+              estado: 'pendiente'
             };
           });
 
@@ -442,6 +414,7 @@ export default function App() {
       alert(`Error al crear el lote: ${err.message}`);
     }
   };
+
   const handleCargarVentasCulqi = async (file: File) => {
     const rows = await parseExcel(file);
     if (!rows.length) {
@@ -503,7 +476,7 @@ export default function App() {
           disponible = Math.round((disponible - cobro) * 100) / 100;
 
           return {
-            operacion: String(p.operacion), // Conserva el ID de operacion intacto
+            operacion: String(p.operacion),
             factura: f.factura,
             razon: f.razon || '',
             importe_factura: cobro,
@@ -515,12 +488,9 @@ export default function App() {
 
       if (rows.length === 0) return;
 
-      // 1. Solo registramos en base de datos en qué se usó la plata. (El banco no se toca)
       const { error } = await supabase.from('conciliaciones').upsert(rows, { onConflict: 'operacion,factura' });
       if (error) throw error;
 
-      // 2. Al refrescar, la función cargarDesdeBD se encargará de hacer la matemática y 
-      // generar el vuelto (tarjeta nueva virtual) si corresponde. ¡Mucho más robusto y sin bucles infinitos!
       await cargarDesdeBD();
       showToast('Conciliación confirmada e ingresada ✓', 'green');
     } catch (err: any) {
@@ -550,8 +520,6 @@ export default function App() {
     const motivo = prompt("Clasificar abono no operativo (ej: Depósito a plazo, Abono incorrecto, Traspasos):");
     if (!motivo || !motivo.trim()) return;
 
-    // ⚡ ACTUALIZACIÓN OPTIMISTA: Cambiamos la vista instantáneamente
-    // sin bloquear la pantalla del usuario.
     setAbonos(prev => prev.map(item => {
       if (item.id === id) {
         return {
@@ -578,15 +546,11 @@ export default function App() {
         confianza: 'alta'
       };
 
-      // Guardamos en la nube en segundo plano (silenciosamente)
       const { error } = await supabase.from('conciliaciones').upsert([row], { onConflict: 'operacion,factura' });
       if (error) throw error;
       
-      // ELIMINAMOS el `await cargarDesdeBD()` para evitar la pantalla de carga de 3 segundos.
-
     } catch (err: any) {
       alert(`Error al clasificar en la nube: ${err.message}`);
-      // Solo si la señal de internet falla, recargamos la BD para revertir el error visual
       await cargarDesdeBD();
     }
   };
@@ -786,11 +750,11 @@ export default function App() {
     const esCatalogo = headers.includes('Producto') && headers.includes('Rubro');
 
     const limpiarDocNum = (serie: any, numero: any) => {
-  const s = String(serie || '').trim().replace(/^0+/, '');
-  const nRaw = String(numero || '').trim().replace(/\D/g, '').replace(/^0+/, '');
-  const n = nRaw ? nRaw.padStart(8, '0') : '';
-  return s && n ? `${s}-${n}` : null;
-};
+      const s = String(serie || '').trim().replace(/^0+/, '');
+      const nRaw = String(numero || '').trim().replace(/\D/g, '').replace(/^0+/, '');
+      const n = nRaw ? nRaw.padStart(8, '0') : '';
+      return s && n ? `${s}-${n}` : null;
+    };
 
     const atraparGlosa = (r: any) => {
       return String(r['GLOSA'] || r['Glosa'] || r['glosa'] || r['DESCRIPCION'] || r['Descripcion'] || '').trim();
@@ -1670,7 +1634,7 @@ export default function App() {
                   onQuitarLinea={handleQuitarLinea}
                   onCambiarLinea={handleCambiarLinea}
                   onToggleDetraccion={handleToggleDetraccion}
-                  onFiltroChange={setAbonosFiltradosVista}  // <--- LÍNEA NUEVA
+                  onFiltroChange={setAbonosFiltradosVista} 
                   stats={statsConciliacion}
                 />
               )}
