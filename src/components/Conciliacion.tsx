@@ -32,7 +32,7 @@ interface ConciliacionProps {
   onQuitarLinea: (id: number, idx: number) => void;
   onCambiarLinea: (id: number, idx: number, val: string) => void;
   onToggleDetraccion: (id: number, checked: boolean) => void;
-  onFiltroChange?: (filtrados: Abono[]) => void; // EL PUENTE: Avisa al archivo principal
+  onFiltroChange?: (filtrados: Abono[]) => void;
   stats: {
     total: number;
     confirmados: number;
@@ -62,6 +62,7 @@ export default function Conciliacion({
   const [filtroMoneda, setFiltroMoneda] = useState<string>('todos');
   const [filtroMes, setFiltroMes] = useState<string>('todos');
   const [filtroDia, setFiltroDia] = useState<string>('todos');
+  const [ordenMonto, setOrdenMonto] = useState<'defecto' | 'desc' | 'asc'>('defecto');
   const [busca, setBusca] = useState<string>('');
   
   const [verTodas, setVerTodas] = useState(false);
@@ -150,7 +151,7 @@ export default function Conciliacion({
 
   const abonosFiltrados = useMemo(() => {
     const buscaNorm = norm(busca);
-    return abonos.filter(p => {
+    const filtrados = abonos.filter(p => {
       if (filtroEstado === 'pendiente' && p.estado === 'confirmado') return false;
       if (filtroEstado === 'confirmado' && p.estado !== 'confirmado') return false;
       if (filtroEstado === 'inter' && !p.ordenante) return false;
@@ -168,7 +169,16 @@ export default function Conciliacion({
       }
       return true;
     });
-  }, [abonos, filtroEstado, filtroMonto, filtroMoneda, filtroMes, filtroDia, busca]);
+
+    // LÓGICA DE ORDENAMIENTO (Sort)
+    if (ordenMonto === 'desc') {
+      filtrados.sort((a, b) => b.monto - a.monto);
+    } else if (ordenMonto === 'asc') {
+      filtrados.sort((a, b) => a.monto - b.monto);
+    }
+    
+    return filtrados;
+  }, [abonos, filtroEstado, filtroMonto, filtroMoneda, filtroMes, filtroDia, busca, ordenMonto]);
 
   // LA MAGIA AQUÍ: Cada vez que abonosFiltrados cambia, se lo enviamos a App.tsx
   useEffect(() => {
@@ -240,6 +250,20 @@ export default function Conciliacion({
               <option value="pendiente">Pendientes</option>
               <option value="confirmado">Confirmados</option>
               <option value="inter">Interbancarios</option>
+            </select>
+          </div>
+
+          {/* NUEVO FILTRO DE ORDENAMIENTO */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider text-capeco-blue">Ordenar por</span>
+            <select 
+              value={ordenMonto} 
+              onChange={(e) => setOrdenMonto(e.target.value as any)}
+              className="bg-blue-50 border border-blue-200 text-capeco-blue text-xs font-bold rounded-xl px-3 py-2 focus:outline-none focus:border-capeco-blue focus:bg-white cursor-pointer"
+            >
+              <option value="defecto">📅 Fecha (Por defecto)</option>
+              <option value="desc">⬆️ Mayor a menor importe</option>
+              <option value="asc">⬇️ Menor a mayor importe</option>
             </select>
           </div>
 
