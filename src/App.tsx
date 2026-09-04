@@ -774,7 +774,9 @@ export default function App() {
     }
 
     const headers = Object.keys(rows[0]);
-    const esContable = headers.includes('SALDO_S') && headers.includes('SERIE') && headers.includes('NUMERO');
+    
+    // Verificamos qué tipo de archivo es
+    const esContable = headers.includes('SALDO_S') || (headers.includes('COMPROMISO_S') && headers.includes('AMORTIZACION_S'));
     const esComercial = headers.includes('SERIE_DOC') && headers.includes('NUMERO_DOC');
     const esCatalogo = headers.includes('Producto') && headers.includes('Rubro');
 
@@ -812,21 +814,34 @@ export default function App() {
       await cargarDesdeBD();
 
     } else if (esContable) {
+      // ⚡ NUEVA LÓGICA DE AGRUPACIÓN PARA PAGOS PARCIALES
       const resumenContable: { [key: string]: any } = {};
+      
       rows.forEach(r => {
         const codFactura = limpiarDocNum(r['SERIE'], r['NUMERO']);
         if (!codFactura) return;
+        
         const monedaDoc = String(r['M_REG'] || 'S').trim().toUpperCase();
         const esDolares = (monedaDoc === 'D' || monedaDoc === 'USD');
-        const saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
+        
+        // Calculamos el saldo de la fila. Soporta el formato viejo (SALDO_S) y el nuevo (COMPROMISO - AMORTIZACION)
+        let saldoFila = 0;
+        
+        if (headers.includes('COMPROMISO_S') && headers.includes('AMORTIZACION_S')) {
+          const compromiso = parseFloat(String(r['COMPROMISO_S']).replace(/,/g, '').trim()) || 0;
+          const amortizacion = parseFloat(String(r['AMORTIZACION_S']).replace(/,/g, '').trim()) || 0;
+          saldoFila = compromiso + amortizacion; // La amortización suele venir en negativo
+        } else {
+          saldoFila = esDolares ? parseFloat(r['SALDO_USD'] || 0) : parseFloat(r['SALDO_S'] || 0);
+        }
 
-        if (!resumenContable[codFactura] || Math.abs(saldoFila) < Math.abs(resumenContable[codFactura].saldo)) {
+        if (!resumenContable[codFactura]) {
           resumenContable[codFactura] = {
             factura: codFactura,
             razon_social: String(r['RAZON_SOCIAL'] || '').trim(),
             fecha_doc: fmtFecha(r['FECHA_DOC']),
             fecha_ven: fmtFecha(r['FECHA_VEN']),
-            saldo: saldoFila,
+            saldo: 0, // Lo inicializamos en 0 y le sumamos el saldo de cada fila
             mes: parseInt(r['MES']) || 0,
             moneda: esDolares ? 'USD' : 'PEN',
             glosa: atraparGlosa(r),
@@ -835,15 +850,26 @@ export default function App() {
             cuenta_contable: String(r['CUENTA'] || '').trim()
           };
         }
+        
+        // Sumamos los saldos de todas las filas que tengan el mismo número de factura
+        resumenContable[codFactura].saldo += saldoFila;
+        
+        // Preservamos las fechas de la fila de Emisión (P) en lugar de la fila de Cobro (C)
+        if (r['TIPO'] === 'P') {
+          resumenContable[codFactura].fecha_doc = fmtFecha(r['FECHA_DOC']);
+          resumenContable[codFactura].fecha_ven = fmtFecha(r['FECHA_VEN']);
+        }
       });
       
+      // Filtramos las facturas que tengan un saldo final mayor a S/ 0.01
       nuevas = Object.values(resumenContable).filter(f => Math.abs(f.saldo) > 0.01);
 
       const { error } = await supabase.from('facturas').upsert(nuevas, { onConflict: 'factura' });
       if (error) throw error;
-      showToast(`Procesadas ${nuevas.length} facturas con éxito.`, 'green');
+      showToast(`Procesadas ${nuevas.length} facturas (Agrupando pagos parciales).`, 'green');
 
     } else if (esComercial) {
+      // ... (El código de facturas_comercial sigue exactamente igual)
       nuevasComercial = rows.map(r => {
         const codFactura = limpiarDocNum(r['SERIE_DOC'], r['NUMERO_DOC']);
         return {
@@ -900,7 +926,6 @@ export default function App() {
       return;
     }
   };
-
   const handleCargarBancos = async (file: File) => {
     return new Promise<void>((resolve, reject) => {
       const reader = new FileReader();
